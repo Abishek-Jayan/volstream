@@ -1,0 +1,14 @@
+[package]
+name = "renderer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+volume-loader = { path = "../volume-loader" }
+wgpu = { workspace = true, features = ["wgsl"] }
+bytemuck = { workspace = true }
+glam = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+pollster = { workspace = true }

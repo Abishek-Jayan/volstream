@@ -1,0 +1,29 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "webxr-server"
+path = "src/main.rs"
+
+[dependencies]
+volume-loader = { path = "../volume-loader" }
+renderer = { path = "../renderer" }
+encoder = { path = "../encoder" }
+transport = { path = "../transport" }
+
+axum = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+toml = { workspace = true }
+glam = { workspace = true }
+rcgen = { workspace = true }
+axum-server = { workspace = true }

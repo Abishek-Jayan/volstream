@@ -1,0 +1,19 @@
+[render]
+# Resolution per eye (side-by-side output will be 2x this width, giving 1920x1080)
+eye_width = 960
+eye_height = 1080
+target_fps = 72
+
+[stereo]
+# Inter-pupillary distance in meters
+ipd = 0.063
+near_plane = 0.01
+far_plane = 1000.0
+
+[stream]
+bitrate_kbps = 8000
+# h264 or vp8
+codec = "h264"
+
+[server]
+port = 8080

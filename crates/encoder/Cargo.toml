@@ -1,0 +1,15 @@
+[package]
+name = "encoder"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["nvenc", "h264"]
+h264 = ["dep:openh264"]
+nvenc = ["dep:ffmpeg-next"]
+
+[dependencies]
+openh264 = { workspace = true, optional = true }
+ffmpeg-next = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

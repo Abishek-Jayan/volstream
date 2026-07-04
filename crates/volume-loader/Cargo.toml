@@ -1,0 +1,13 @@
+[package]
+name = "volume-loader"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = { workspace = true }
+flate2 = { workspace = true }
+ndarray = { workspace = true }
+zarrs = { version = "0.20", features = ["filesystem"] }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
