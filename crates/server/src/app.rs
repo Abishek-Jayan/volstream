@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use axum::{
@@ -66,8 +66,12 @@ async fn ws_signal_handler(
 /// 4. Launch WebRTC session + render loop tasks.
 /// 5. Drain the WebSocket until the client closes it.
 async fn handle_signal(mut ws: WebSocket, state: Arc<AppState>) {
-    // Bind a UDP socket; the port is automatically chosen by the OS.
-    let socket = match UdpSocket::bind("0.0.0.0:0").await {
+    // Bind the WebRTC media UDP socket to the configured LAN IP (not the
+    // wildcard address) on a fixed port, so a single firewall rule for this
+    // port stays valid across restarts and the loopback socket below can
+    // bind the same port number on its own address.
+    let lan_addr = SocketAddr::new(state.config.local_ip, state.config.media_port);
+    let socket = match UdpSocket::bind(lan_addr).await {
         Ok(s) => s,
         Err(e) => {
             tracing::error!("signal: failed to bind UDP socket: {e}");
@@ -87,12 +91,12 @@ async fn handle_signal(mut ws: WebSocket, state: Arc<AppState>) {
 
     let mut session = WebRtcSession::new();
     let (offer, pending) = match session.create_offer(ice_addr) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::error!("signal: create_offer failed: {e}");
-            return;
-        }
-    };
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("signal: create_offer failed: {e}");
+                return;
+            }
+        };
 
     // ── Step 1: receive pair code ──────────────────────────────────────────────
 
@@ -185,7 +189,7 @@ async fn handle_signal(mut ws: WebSocket, state: Arc<AppState>) {
     // Spawn the WebRTC drive loop; it resets pairing when it exits.
     let pairing: Arc<PairingState> = state.pairing.clone();
     tokio::spawn(async move {
-        session.run(socket, ice_addr, video_rx, pose_tx, pose_tag_rx).await;
+        session.run(socket, lan_addr, video_rx, pose_tx, pose_tag_rx).await;
         pairing.disconnect();
         tracing::info!("WebRTC session ended — pairing reset");
     });
@@ -211,6 +215,7 @@ mod tests {
             ipd: 0.063,
             viewing_distance: 2.0,
             local_ip: "127.0.0.1".parse().unwrap(),
+            media_port: 40100,
             render_scale: 1.0,
             sample_density: 0.30,
             prediction_horizon_secs: 0.0,

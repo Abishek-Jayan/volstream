@@ -24,8 +24,13 @@ struct Args {
 
     /// Local IP address used in WebRTC ICE candidates and the TLS SAN.
     /// Set to the IP your device can reach on the local network, e.g. 192.168.1.100.
-    #[arg(long, default_value = "127.0.0.1")]
-    local_ip: IpAddr,
+    /// Auto-detected from the default outbound route when omitted.
+    #[arg(long)]
+    local_ip: Option<IpAddr>,
+
+    /// Windows specific fix: Fixed UDP port for the WebRTC media socket. Pinned rather than OS-assigned so a single firewall rule stays valid across restarts.
+    #[arg(long, default_value = "40100")]
+    media_port: u16,
 
     /// Target render / stream frame rate (fps)
     #[arg(long, default_value = "72")]
@@ -71,12 +76,23 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
+    let local_ip = args.local_ip.unwrap_or_else(|| {
+        detect_local_ip().unwrap_or_else(|| {
+            tracing::warn!(
+                "Could not auto-detect a LAN IP; falling back to 127.0.0.1 — pass --local-ip \
+                 explicitly if this server needs to be reached from another device"
+            );
+            IpAddr::from([127, 0, 0, 1])
+        })
+    });
+
     let config = Config {
         fps: args.fps,
         bitrate_kbps: args.bitrate,
         ipd: args.ipd,
         viewing_distance: args.volume_distance,
-        local_ip: args.local_ip,
+        local_ip,
+        media_port: args.media_port,
         render_scale: args.render_scale.clamp(0.1, 1.0),
         sample_density: args.sample_density.clamp(0.0, 1.0),
         prediction_horizon_secs: args.prediction_horizon_ms as f32 / 1000.0,
@@ -89,11 +105,11 @@ async fn main() -> Result<()> {
     // specified local IP.  WebXR requires a secure context (HTTPS), so TLS is
     // mandatory.  Browsers will show a security warning for self-signed certs —
     // click "Advanced → Proceed" once to continue.
-    let tls_config = make_tls_config(args.local_ip).await?;
+    let tls_config = make_tls_config(local_ip).await?;
 
     let addr: std::net::SocketAddr = format!("0.0.0.0:{}", args.port).parse()?;
     tracing::info!("Listening on https://{}", addr);
-    tracing::info!("Open https://{}:{}/  on your device", args.local_ip, args.port);
+    tracing::info!("Open https://{}:{}/  on your device", local_ip, args.port);
     tracing::warn!(
         "Self-signed certificate in use — click 'Advanced → Proceed' in the browser to continue"
     );
@@ -103,6 +119,15 @@ async fn main() -> Result<()> {
         .await?;
 
     Ok(())
+}
+
+/// Best-effort detection of this machine's LAN-facing IP by asking the OS
+/// which local address it would use to route toward a public address.
+/// `UdpSocket::connect` only resolves a route — no packets are sent.
+fn detect_local_ip() -> Option<IpAddr> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    socket.local_addr().ok().map(|a| a.ip())
 }
 
 async fn make_tls_config(local_ip: IpAddr) -> Result<RustlsConfig> {

@@ -16,6 +16,9 @@ pub struct Config {
     pub viewing_distance: f32,
     /// Local IP address exposed in WebRTC ICE candidates.
     pub local_ip: IpAddr,
+    /// Fixed UDP port for the WebRTC media socket. Pinned rather than
+    /// OS-assigned so a single firewall rule stays valid across restarts.
+    pub media_port: u16,
     /// Scale factor applied to headset-reported eye resolution before rendering.
     /// 1.0 = native resolution; 0.75 = 75% (reduces GPU/encode load).
     pub render_scale: f32,
@@ -66,6 +69,7 @@ mod tests {
             ipd: 0.063,
             viewing_distance: 2.0,
             local_ip: "127.0.0.1".parse().unwrap(),
+            media_port: 40100,
             render_scale: 1.0,
             sample_density: 0.30,
             prediction_horizon_secs: 0.020,
