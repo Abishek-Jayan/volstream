@@ -29,10 +29,13 @@ impl GpuContext {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or_else(|| RendererError::GpuInit(
-                "No suitable GPU adapter found. Ensure a Vulkan-capable GPU is available \
-                 and WGPU_BACKEND=vulkan if needed.".into()
-            ))?;
+            .ok_or_else(|| {
+                RendererError::GpuInit(
+                    "No suitable GPU adapter found. Ensure a Vulkan-capable GPU is available \
+                 and WGPU_BACKEND=vulkan if needed."
+                        .into(),
+                )
+            })?;
 
         let info = adapter.get_info();
         tracing::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -68,7 +71,12 @@ impl GpuContext {
             .await
             .map_err(|e| RendererError::GpuInit(e.to_string()))?;
 
-        Ok(Self { instance, adapter, device, queue })
+        Ok(Self {
+            instance,
+            adapter,
+            device,
+            queue,
+        })
     }
 }
 

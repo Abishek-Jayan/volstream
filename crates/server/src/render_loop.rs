@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::mpsc::{self, TrySendError};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::{mpsc as tokio_mpsc, watch};
@@ -9,7 +9,6 @@ use volume_loader::VolumeData;
 use renderer::{HeadPose as RendererPose, Renderer, DEFAULT_EYE_HEIGHT, DEFAULT_EYE_WIDTH};
 
 // ── Pose prediction ──────────────────────────────────────────────────────────
-
 
 /// Extrapolates head pose forward using constant-velocity kinematics derived
 /// from the two most recently received poses.
@@ -23,7 +22,10 @@ struct PosePredictor {
 
 impl PosePredictor {
     fn new() -> Self {
-        Self { older: None, newer: None }
+        Self {
+            older: None,
+            newer: None,
+        }
     }
 
     /// Record a newly received pose (call only when the timestamp advances).
@@ -42,7 +44,7 @@ impl PosePredictor {
 
         let dt = curr_t.duration_since(*prev_t).as_secs_f32();
         // Reject duplicate or stale readings: < 1 ms apart or > 500 ms apart.
-        if dt < 0.001 || dt > 0.5 {
+        if !(0.001..=0.5).contains(&dt) {
             return None;
         }
 
@@ -62,12 +64,16 @@ impl PosePredictor {
         // delta_q: incremental rotation from prev to curr.
         // Extrapolate by applying it t× (scale the angle-axis).
         let curr_q = glam::Quat::from_xyzw(
-            curr.orientation[0], curr.orientation[1],
-            curr.orientation[2], curr.orientation[3],
+            curr.orientation[0],
+            curr.orientation[1],
+            curr.orientation[2],
+            curr.orientation[3],
         );
         let prev_q = glam::Quat::from_xyzw(
-            prev.orientation[0], prev.orientation[1],
-            prev.orientation[2], prev.orientation[3],
+            prev.orientation[0],
+            prev.orientation[1],
+            prev.orientation[2],
+            prev.orientation[3],
         );
 
         let delta_q = prev_q.inverse() * curr_q;
@@ -81,9 +87,9 @@ impl PosePredictor {
         };
 
         Some(RendererPose {
-            position:   pred_pos,
+            position: pred_pos,
             orientation: pred_q,
-            proj_left:  curr.proj_left .map(|m| glam::Mat4::from_cols_array(&m)),
+            proj_left: curr.proj_left.map(|m| glam::Mat4::from_cols_array(&m)),
             proj_right: curr.proj_right.map(|m| glam::Mat4::from_cols_array(&m)),
         })
     }
@@ -99,11 +105,11 @@ impl PosePredictor {
 /// - `drop_rate == 0.0`           → scale up by `STEP_UP`, cap `SCALE_MAX`.
 /// - otherwise                    → no change.
 fn adapt_scale(current: f32, drop_rate: f32) -> f32 {
-    const STEP_DOWN:       f32 = 0.10;
-    const STEP_UP:         f32 = 0.05;
-    const SCALE_MIN:       f32 = 0.50;
-    const SCALE_MAX:       f32 = 1.00;
-    const DROP_THRESHOLD:  f32 = 0.10; // >10 % drops triggers a scale-down
+    const STEP_DOWN: f32 = 0.10;
+    const STEP_UP: f32 = 0.05;
+    const SCALE_MIN: f32 = 0.50;
+    const SCALE_MAX: f32 = 1.00;
+    const DROP_THRESHOLD: f32 = 0.10; // >10 % drops triggers a scale-down
 
     if drop_rate > DROP_THRESHOLD {
         (current - STEP_DOWN).max(SCALE_MIN)
@@ -118,9 +124,9 @@ fn adapt_scale(current: f32, drop_rate: f32) -> f32 {
 
 /// Raw RGBA8 frame from the GPU render thread, consumed by the encode thread.
 struct RawFrame {
-    rgba:                Vec<u8>,
-    width:               u32,
-    height:              u32,
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
     /// Quaternion [x, y, z, w] of the pose that was used to render this frame.
     /// Forwarded to the client as an ATW pose-tag after encoding.
     rendered_orientation: [f32; 4],
@@ -133,10 +139,12 @@ pub fn to_renderer_pose(p: &TransportPose) -> RendererPose {
     RendererPose {
         position: glam::Vec3::new(p.position[0], p.position[1], p.position[2]),
         orientation: glam::Quat::from_xyzw(
-            p.orientation[0], p.orientation[1],
-            p.orientation[2], p.orientation[3],
+            p.orientation[0],
+            p.orientation[1],
+            p.orientation[2],
+            p.orientation[3],
         ),
-        proj_left:  p.proj_left .map(|m| glam::Mat4::from_cols_array(&m)),
+        proj_left: p.proj_left.map(|m| glam::Mat4::from_cols_array(&m)),
         proj_right: p.proj_right.map(|m| glam::Mat4::from_cols_array(&m)),
     }
 }
@@ -183,7 +191,17 @@ pub fn run(
     let render_handle = std::thread::Builder::new()
         .name("webxr-render".into())
         .spawn(move || {
-            render_thread(volume, fps, ipd, viewing_distance, render_scale, sample_density, prediction_horizon_secs, pose_rx, raw_tx);
+            render_thread(
+                volume,
+                fps,
+                ipd,
+                viewing_distance,
+                render_scale,
+                sample_density,
+                prediction_horizon_secs,
+                pose_rx,
+                raw_tx,
+            );
         })
         .expect("failed to spawn render thread");
 
@@ -246,7 +264,10 @@ fn render_thread(
 
     tracing::info!(
         "Render thread started: {} fps, {}×{} per eye (scale {:.2}, pred {:.0} ms)",
-        fps, cur_eye_w, cur_eye_h, render_scale,
+        fps,
+        cur_eye_w,
+        cur_eye_h,
+        render_scale,
         prediction_horizon_secs * 1000.0,
     );
 
@@ -282,7 +303,11 @@ fn render_thread(
                     if w != cur_eye_w || h != cur_eye_h {
                         tracing::info!(
                             "Headset viewport: {}×{} native → {}×{} scaled (×{:.2})",
-                            raw_w, raw_h, w, h, current_scale,
+                            raw_w,
+                            raw_h,
+                            w,
+                            h,
+                            current_scale,
                         );
                         renderer.resize(w, h);
                         cur_eye_w = w;
@@ -291,7 +316,8 @@ fn render_thread(
                 }
 
                 // Use predicted pose; fall back to raw if insufficient history.
-                predictor.predict(prediction_horizon_secs)
+                predictor
+                    .predict(prediction_horizon_secs)
                     .unwrap_or_else(|| to_renderer_pose(p))
             }
             None => RendererPose::default(),
@@ -319,9 +345,9 @@ fn render_thread(
             let atw_orientation = prev_rendered_orientation.unwrap_or(rendered_orientation);
 
             match raw_tx.try_send(RawFrame {
-                rgba:                 frame.rgba,
-                width:                frame.width,
-                height:               frame.height,
+                rgba: frame.rgba,
+                width: frame.width,
+                height: frame.height,
                 rendered_orientation: atw_orientation,
             }) {
                 Ok(()) => {
@@ -344,13 +370,22 @@ fn render_thread(
         let elapsed = fps_window_start.elapsed();
         if elapsed >= REPORT_INTERVAL {
             let total = sent_count + dropped_count;
-            let drop_rate = if total > 0 { dropped_count as f32 / total as f32 } else { 0.0 };
+            let drop_rate = if total > 0 {
+                dropped_count as f32 / total as f32
+            } else {
+                0.0
+            };
             let actual_fps = sent_count as f32 / elapsed.as_secs_f32();
             tracing::info!(
                 "Render: {:.1} fps encoded (target {} fps, {}×{} per eye, \
                  {} dropped ({:.1}%), scale {:.2})",
-                actual_fps, fps, cur_eye_w, cur_eye_h,
-                dropped_count, drop_rate * 100.0, current_scale,
+                actual_fps,
+                fps,
+                cur_eye_w,
+                cur_eye_h,
+                dropped_count,
+                drop_rate * 100.0,
+                current_scale,
             );
 
             // Adjust render scale based on encode throughput.
@@ -362,8 +397,13 @@ fn render_thread(
                         tracing::info!(
                             "Adaptive resolution: scale {:.2} → {:.2} \
                              (drop_rate={:.1}%, {}×{} → {}×{} per eye)",
-                            current_scale, new_scale, drop_rate * 100.0,
-                            cur_eye_w, cur_eye_h, sw, sh,
+                            current_scale,
+                            new_scale,
+                            drop_rate * 100.0,
+                            cur_eye_w,
+                            cur_eye_h,
+                            sw,
+                            sh,
                         );
                         renderer.resize(sw, sh);
                         cur_eye_w = sw;
@@ -473,7 +513,7 @@ mod tests {
     #[test]
     fn scale_dims_rounds_to_mult_of_8_and_2() {
         assert_eq!(scale_dims(1832, 1920, 0.75), (1368, 1440));
-        assert_eq!(scale_dims(1832, 1920, 1.0),  (1832, 1920));
+        assert_eq!(scale_dims(1832, 1920, 1.0), (1832, 1920));
         assert_eq!(scale_dims(101, 101, 1.0), (96, 100));
         assert_eq!(scale_dims(10, 10, 0.1), (64, 64));
     }
@@ -520,7 +560,11 @@ mod tests {
             position: [0.0, 1.6, 0.0],
             orientation: [0.0, 0.0, 0.0, 1.0],
             timestamp: 1000,
-            ipd: None, proj_left: None, proj_right: None, eye_width: None, eye_height: None,
+            ipd: None,
+            proj_left: None,
+            proj_right: None,
+            eye_width: None,
+            eye_height: None,
         };
         pred.update(&pose, Instant::now());
         assert!(pred.predict(0.040).is_none(), "need at least 2 poses");
@@ -535,13 +579,21 @@ mod tests {
             position: [0.0, 1.6, 0.0],
             orientation: [0.0, 0.0, 0.0, 1.0],
             timestamp: 0,
-            ipd: None, proj_left: None, proj_right: None, eye_width: None, eye_height: None,
+            ipd: None,
+            proj_left: None,
+            proj_right: None,
+            eye_width: None,
+            eye_height: None,
         };
         let p1 = TransportPose {
             position: [0.1, 1.6, 0.0], // moving +X at ~0.1/dt m/s
             orientation: [0.0, 0.0, 0.0, 1.0],
             timestamp: 14,
-            ipd: None, proj_left: None, proj_right: None, eye_width: None, eye_height: None,
+            ipd: None,
+            proj_left: None,
+            proj_right: None,
+            eye_width: None,
+            eye_height: None,
         };
 
         pred.update(&p0, t0);
@@ -549,8 +601,11 @@ mod tests {
 
         let predicted = pred.predict(0.014).expect("should have prediction");
         // At dt=14ms, horizon=14ms: t=1, pred = p1.pos + vel*14ms = p1 + (p1-p0) = [0.2, 1.6, 0.0]
-        assert!((predicted.position.x - 0.2).abs() < 0.01,
-            "predicted x={}, expected ~0.2", predicted.position.x);
+        assert!(
+            (predicted.position.x - 0.2).abs() < 0.01,
+            "predicted x={}, expected ~0.2",
+            predicted.position.x
+        );
     }
 
     #[test]
@@ -562,29 +617,51 @@ mod tests {
             position: [0.0, 0.0, 0.0],
             orientation: [0.0, 0.0, 0.0, 1.0], // identity — no rotation
             timestamp: ts,
-            ipd: None, proj_left: None, proj_right: None, eye_width: None, eye_height: None,
+            ipd: None,
+            proj_left: None,
+            proj_right: None,
+            eye_width: None,
+            eye_height: None,
         };
 
         pred.update(&identity_pose(0), t0);
         pred.update(&identity_pose(14), t0 + Duration::from_millis(14));
 
         let predicted = pred.predict(0.040).expect("prediction available");
-        assert!((predicted.orientation.w - 1.0).abs() < 1e-5,
-            "identity orientation should remain identity");
+        assert!(
+            (predicted.orientation.w - 1.0).abs() < 1e-5,
+            "identity orientation should remain identity"
+        );
     }
 
     #[test]
     fn run_exits_cleanly_without_gpu() {
         let (video_tx, video_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
         let (pose_tag_tx, _pose_tag_rx) = tokio::sync::mpsc::channel::<[f32; 4]>(4);
-        let (_pose_tx, pose_rx) =
-            tokio::sync::watch::channel::<Option<TransportPose>>(None);
+        let (_pose_tx, pose_rx) = tokio::sync::watch::channel::<Option<TransportPose>>(None);
         drop(video_rx);
 
         let n = 4u32;
         let data = vec![0.5f32; (n * n * n) as usize];
-        let volume = Arc::new(VolumeData::new([n, n, n], [1.0, 1.0, 1.0], data, (0.0, 1.0)));
+        let volume = Arc::new(VolumeData::new(
+            [n, n, n],
+            [1.0, 1.0, 1.0],
+            data,
+            (0.0, 1.0),
+        ));
 
-        run(volume, 72, 8000, 0.063, 2.0, 1.0, 0.30, 0.020, pose_rx, video_tx, pose_tag_tx);
+        run(
+            volume,
+            72,
+            8000,
+            0.063,
+            2.0,
+            1.0,
+            0.30,
+            0.020,
+            pose_rx,
+            video_tx,
+            pose_tag_tx,
+        );
     }
 }

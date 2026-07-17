@@ -70,8 +70,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Default to `info` for all workspace crates; honour RUST_LOG if set.
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     let args = Args::parse();

@@ -88,7 +88,11 @@ pub fn load_zarr_with_limit(path: &Path, max_voxels: usize) -> Result<VolumeData
         .ok_or_else(|| VolumeError::Parse("No 'multiscales' entry in .zattrs".into()))?;
 
     let (dataset, level_idx) = select_level(&multiscale.datasets, max_voxels, path)?;
-    tracing::info!("Selected OME-Zarr level {} (path: {})", level_idx, dataset.path);
+    tracing::info!(
+        "Selected OME-Zarr level {} (path: {})",
+        level_idx,
+        dataset.path
+    );
 
     let spacing = extract_spacing(&multiscale.axes, &dataset.coordinate_transformations);
     tracing::info!("Voxel spacing: {:?}", spacing);
@@ -113,21 +117,36 @@ pub fn load_zarr_with_limit(path: &Path, max_voxels: usize) -> Result<VolumeData
     // Build subset ranges: full range for spatial dims, first index for all others.
     let spatial_set: std::collections::HashSet<usize> = spatial_offsets.iter().copied().collect();
     let ranges: Vec<std::ops::Range<u64>> = (0..shape.len())
-        .map(|i| if spatial_set.contains(&i) { 0..shape[i] } else { 0..1 })
+        .map(|i| {
+            if spatial_set.contains(&i) {
+                0..shape[i]
+            } else {
+                0..1
+            }
+        })
         .collect();
     let subset = ArraySubset::new_with_ranges(&ranges);
     let elements = retrieve_as_f32(&array, &subset)?;
     if elements.len() != expected {
         return Err(VolumeError::Zarr(format!(
             "Retrieved {} elements but expected {} ({}x{}x{})",
-            elements.len(), expected, nx, ny, nz
+            elements.len(),
+            expected,
+            nx,
+            ny,
+            nz
         )));
     }
     let (normalized, range) = normalize(&elements);
 
     tracing::info!(
         "Loaded OME-Zarr: {}x{}x{}, spacing={:?}, range=({:.2},{:.2})",
-        nx, ny, nz, spacing, range.0, range.1
+        nx,
+        ny,
+        nz,
+        spacing,
+        range.0,
+        range.1
     );
 
     Ok(VolumeData::new(
@@ -162,16 +181,17 @@ fn retrieve_as_f32(
             .retrieve_array_subset_elements::<f32>(subset)
             .map_err(|e| VolumeError::Zarr(format!("Failed to retrieve array data: {}", e))),
         DataType::Float64 => retrieve!(f64),
-        DataType::UInt8   => retrieve!(u8),
-        DataType::Int8    => retrieve!(i8),
-        DataType::UInt16  => retrieve!(u16),
-        DataType::Int16   => retrieve!(i16),
-        DataType::UInt32  => retrieve!(u32),
-        DataType::Int32   => retrieve!(i32),
-        DataType::UInt64  => retrieve!(u64),
-        DataType::Int64   => retrieve!(i64),
+        DataType::UInt8 => retrieve!(u8),
+        DataType::Int8 => retrieve!(i8),
+        DataType::UInt16 => retrieve!(u16),
+        DataType::Int16 => retrieve!(i16),
+        DataType::UInt32 => retrieve!(u32),
+        DataType::Int32 => retrieve!(i32),
+        DataType::UInt64 => retrieve!(u64),
+        DataType::Int64 => retrieve!(i64),
         other => Err(VolumeError::Unsupported(format!(
-            "Unsupported zarr data type: {:?}", other
+            "Unsupported zarr data type: {:?}",
+            other
         ))),
     }
 }
@@ -195,8 +215,12 @@ fn fix_null_fill_values(path: &Path) {
 }
 
 fn patch_zarray_fill_value(path: &Path) {
-    let Ok(bytes) = std::fs::read(path) else { return };
-    let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(&bytes) else { return };
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return;
+    };
 
     let fill = val.get("fill_value");
     if !matches!(fill, Some(serde_json::Value::Null)) {
@@ -277,8 +301,12 @@ fn read_ome_metadata(path: &Path) -> Result<OmeZattrs, VolumeError> {
         let root: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|e| VolumeError::Parse(format!("Failed to parse zarr.json: {}", e)))?;
         let attrs = root.get("attributes").cloned().unwrap_or(root);
-        return serde_json::from_value(attrs)
-            .map_err(|e| VolumeError::Parse(format!("Failed to parse OME metadata from zarr.json: {}", e)));
+        return serde_json::from_value(attrs).map_err(|e| {
+            VolumeError::Parse(format!(
+                "Failed to parse OME metadata from zarr.json: {}",
+                e
+            ))
+        });
     }
 
     Err(VolumeError::Parse(
@@ -310,7 +338,8 @@ fn select_level<'a>(
     // Nothing fits — use coarsest
     tracing::warn!(
         "No level fits within {} voxels, using coarsest level ({})",
-        max_voxels, datasets.last().unwrap().path
+        max_voxels,
+        datasets.last().unwrap().path
     );
     Ok((datasets.last().unwrap(), datasets.len() - 1))
 }
@@ -320,10 +349,11 @@ fn estimate_voxels(array_path: &Path) -> Result<usize, VolumeError> {
     let zarray_path = array_path.join(".zarray");
     if zarray_path.exists() {
         let bytes = std::fs::read(&zarray_path)?;
-        let meta: serde_json::Value = serde_json::from_slice(&bytes)
-            .map_err(|e| VolumeError::Parse(e.to_string()))?;
+        let meta: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|e| VolumeError::Parse(e.to_string()))?;
         if let Some(shape) = meta.get("shape").and_then(|s| s.as_array()) {
-            let voxels: usize = shape.iter()
+            let voxels: usize = shape
+                .iter()
                 .filter_map(|v| v.as_u64())
                 .map(|v| v as usize)
                 .product();
@@ -334,17 +364,20 @@ fn estimate_voxels(array_path: &Path) -> Result<usize, VolumeError> {
     let zarr_json = array_path.join("zarr.json");
     if zarr_json.exists() {
         let bytes = std::fs::read(&zarr_json)?;
-        let meta: serde_json::Value = serde_json::from_slice(&bytes)
-            .map_err(|e| VolumeError::Parse(e.to_string()))?;
+        let meta: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|e| VolumeError::Parse(e.to_string()))?;
         if let Some(shape) = meta.get("shape").and_then(|s| s.as_array()) {
-            let voxels: usize = shape.iter()
+            let voxels: usize = shape
+                .iter()
                 .filter_map(|v| v.as_u64())
                 .map(|v| v as usize)
                 .product();
             return Ok(voxels);
         }
     }
-    Err(VolumeError::Parse("Could not read array shape metadata".into()))
+    Err(VolumeError::Parse(
+        "Could not read array shape metadata".into(),
+    ))
 }
 
 /// Extract spatial (z, y, x) dimensions and their indices in the full shape array.
@@ -357,13 +390,18 @@ fn extract_spatial_dims(
         // No axes metadata — assume last 3 dims are z, y, x
         if shape.len() < 3 {
             return Err(VolumeError::Parse(format!(
-                "Array has {} dims, need at least 3", shape.len()
+                "Array has {} dims, need at least 3",
+                shape.len()
             )));
         }
         let n = shape.len();
         return Ok((
-            [shape[n-1] as usize, shape[n-2] as usize, shape[n-3] as usize],
-            [n-1, n-2, n-3],
+            [
+                shape[n - 1] as usize,
+                shape[n - 2] as usize,
+                shape[n - 3] as usize,
+            ],
+            [n - 1, n - 2, n - 3],
         ));
     }
 
@@ -372,12 +410,17 @@ fn extract_spatial_dims(
         axes.iter().position(|a| a.name.eq_ignore_ascii_case(name))
     };
 
-    let xi = find("x").ok_or_else(|| VolumeError::Parse("No 'x' axis in OME-NGFF metadata".into()))?;
-    let yi = find("y").ok_or_else(|| VolumeError::Parse("No 'y' axis in OME-NGFF metadata".into()))?;
-    let zi = find("z").ok_or_else(|| VolumeError::Parse("No 'z' axis in OME-NGFF metadata".into()))?;
+    let xi =
+        find("x").ok_or_else(|| VolumeError::Parse("No 'x' axis in OME-NGFF metadata".into()))?;
+    let yi =
+        find("y").ok_or_else(|| VolumeError::Parse("No 'y' axis in OME-NGFF metadata".into()))?;
+    let zi =
+        find("z").ok_or_else(|| VolumeError::Parse("No 'z' axis in OME-NGFF metadata".into()))?;
 
     if xi >= shape.len() || yi >= shape.len() || zi >= shape.len() {
-        return Err(VolumeError::Parse("Axis indices out of bounds for array shape".into()));
+        return Err(VolumeError::Parse(
+            "Axis indices out of bounds for array shape".into(),
+        ));
     }
 
     Ok((
@@ -437,35 +480,75 @@ mod tests {
     #[test]
     fn extract_spacing_from_axes_and_transforms() {
         let axes = vec![
-            Axis { name: "z".into(), axis_type: "space".into(), unit: "micrometer".into() },
-            Axis { name: "y".into(), axis_type: "space".into(), unit: "micrometer".into() },
-            Axis { name: "x".into(), axis_type: "space".into(), unit: "micrometer".into() },
+            Axis {
+                name: "z".into(),
+                axis_type: "space".into(),
+                unit: "micrometer".into(),
+            },
+            Axis {
+                name: "y".into(),
+                axis_type: "space".into(),
+                unit: "micrometer".into(),
+            },
+            Axis {
+                name: "x".into(),
+                axis_type: "space".into(),
+                unit: "micrometer".into(),
+            },
         ];
         let transforms = vec![CoordinateTransform::Scale {
             scale: vec![0.5, 0.25, 0.25],
         }];
         let spacing = extract_spacing(&axes, &transforms);
         // z: index 0, scale 0.5 µm → 0.5/1000 mm = 0.0005
-        assert!((spacing[2] - 0.0005).abs() < 1e-7, "z spacing: {}", spacing[2]);
+        assert!(
+            (spacing[2] - 0.0005).abs() < 1e-7,
+            "z spacing: {}",
+            spacing[2]
+        );
         // x: index 2, scale 0.25 µm → 0.00025
-        assert!((spacing[0] - 0.00025).abs() < 1e-8, "x spacing: {}", spacing[0]);
+        assert!(
+            (spacing[0] - 0.00025).abs() < 1e-8,
+            "x spacing: {}",
+            spacing[0]
+        );
     }
 
     #[test]
     fn extract_spatial_dims_with_axes_metadata() {
         let axes = vec![
-            Axis { name: "t".into(), axis_type: "time".into(), unit: String::new() },
-            Axis { name: "c".into(), axis_type: "channel".into(), unit: String::new() },
-            Axis { name: "z".into(), axis_type: "space".into(), unit: "micrometer".into() },
-            Axis { name: "y".into(), axis_type: "space".into(), unit: "micrometer".into() },
-            Axis { name: "x".into(), axis_type: "space".into(), unit: "micrometer".into() },
+            Axis {
+                name: "t".into(),
+                axis_type: "time".into(),
+                unit: String::new(),
+            },
+            Axis {
+                name: "c".into(),
+                axis_type: "channel".into(),
+                unit: String::new(),
+            },
+            Axis {
+                name: "z".into(),
+                axis_type: "space".into(),
+                unit: "micrometer".into(),
+            },
+            Axis {
+                name: "y".into(),
+                axis_type: "space".into(),
+                unit: "micrometer".into(),
+            },
+            Axis {
+                name: "x".into(),
+                axis_type: "space".into(),
+                unit: "micrometer".into(),
+            },
         ];
         let shape = vec![2u64, 3, 64, 128, 256]; // t=2, c=3, z=64, y=128, x=256
         let ([nx, ny, nz], [xi, yi, zi]) = extract_spatial_dims(&shape, &axes).unwrap();
         assert_eq!(nx, 256); // x
         assert_eq!(ny, 128); // y
-        assert_eq!(nz, 64);  // z
-        assert_eq!(xi, 4);   // index of x in shape
+        assert_eq!(nz, 64); // z
+        assert_eq!(xi, 4); // index of x in shape
         assert_eq!(yi, 3);
         assert_eq!(zi, 2);
     }
@@ -479,5 +562,4 @@ mod tests {
         assert_eq!(ny, 128);
         assert_eq!(nz, 64);
     }
-
 }

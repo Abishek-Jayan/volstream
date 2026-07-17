@@ -25,15 +25,22 @@ impl Slot {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        Self { buffer, output_width, output_height, bytes_per_row }
+        Self {
+            buffer,
+            output_width,
+            output_height,
+            bytes_per_row,
+        }
     }
 
     /// Submit a copy of `src_texture` into this buffer and return the
     /// `SubmissionIndex` that can be waited on later.
     fn submit_copy(&self, gpu: &GpuContext, src: &wgpu::Texture) -> wgpu::SubmissionIndex {
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("readback-copy"),
-        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("readback-copy"),
+            });
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: src,
@@ -65,9 +72,11 @@ impl Slot {
     fn wait_and_read(&self, gpu: &GpuContext, sub: wgpu::SubmissionIndex) -> Vec<u8> {
         // Request the mapping first so the callback is queued before we poll.
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        self.buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
-            tx.send(result).ok();
-        });
+        self.buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                tx.send(result).ok();
+            });
 
         // Wait only for the submission that wrote this slot, not all GPU work.
         gpu.device.poll(wgpu::Maintain::WaitForSubmissionIndex(sub));
@@ -147,11 +156,7 @@ impl DoubleReadback {
     ///
     /// Returns `None` on the first call after construction or `resize` — there
     /// is no previous frame to return yet.
-    pub fn submit_and_read(
-        &mut self,
-        gpu: &GpuContext,
-        src: &wgpu::Texture,
-    ) -> Option<Vec<u8>> {
+    pub fn submit_and_read(&mut self, gpu: &GpuContext, src: &wgpu::Texture) -> Option<Vec<u8>> {
         let cur = self.cur;
         self.cur = 1 - self.cur; // toggle 0 ↔ 1
 
@@ -218,7 +223,9 @@ mod tests {
         let tex = make_src_texture(&gpu, eye_w, eye_h);
         let mut rb = DoubleReadback::new(&gpu, eye_w, eye_h);
         assert!(rb.submit_and_read(&gpu, &tex).is_none()); // warmup
-        let data = rb.submit_and_read(&gpu, &tex).expect("expected Some on second call");
+        let data = rb
+            .submit_and_read(&gpu, &tex)
+            .expect("expected Some on second call");
         let expected = (eye_w * 2 * eye_h * 4) as usize;
         assert_eq!(data.len(), expected);
     }
@@ -233,7 +240,7 @@ mod tests {
         let mut rb = DoubleReadback::new(&gpu, 4, 4);
         rb.submit_and_read(&gpu, &tex); // frame 0 → None
         rb.submit_and_read(&gpu, &tex); // frame 1 → Some
-        rb.resize(&gpu, 4, 4);         // reset
+        rb.resize(&gpu, 4, 4); // reset
         assert!(rb.submit_and_read(&gpu, &tex).is_none()); // warmup again
     }
 

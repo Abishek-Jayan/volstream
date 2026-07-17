@@ -62,11 +62,23 @@ pub async fn run_handshake(
     match recv_json::<ClientMsg>(ws).await? {
         ClientMsg::Pair { code } if code == expected_code => {}
         ClientMsg::Pair { .. } => {
-            let _ = send_json(ws, &ServerMsg::Error { msg: "Invalid pairing code".into() }).await;
+            let _ = send_json(
+                ws,
+                &ServerMsg::Error {
+                    msg: "Invalid pairing code".into(),
+                },
+            )
+            .await;
             return None;
         }
         _ => {
-            let _ = send_json(ws, &ServerMsg::Error { msg: "Expected pair message".into() }).await;
+            let _ = send_json(
+                ws,
+                &ServerMsg::Error {
+                    msg: "Expected pair message".into(),
+                },
+            )
+            .await;
             return None;
         }
     }
@@ -87,7 +99,9 @@ mod tests {
 
     #[test]
     fn client_pair_round_trips() {
-        let msg = ClientMsg::Pair { code: "123456".into() };
+        let msg = ClientMsg::Pair {
+            code: "123456".into(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"pair\""));
         assert!(json.contains("\"code\":\"123456\""));
@@ -98,7 +112,9 @@ mod tests {
 
     #[test]
     fn server_error_round_trips() {
-        let msg = ServerMsg::Error { msg: "Invalid pairing code".into() };
+        let msg = ServerMsg::Error {
+            msg: "Invalid pairing code".into(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"error\""));
 
@@ -108,7 +124,9 @@ mod tests {
 
     #[test]
     fn client_ice_round_trips() {
-        let msg = ClientMsg::Ice { candidate: "candidate:1 1 UDP ...".into() };
+        let msg = ClientMsg::Ice {
+            candidate: "candidate:1 1 UDP ...".into(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"ice\""));
 

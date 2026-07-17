@@ -50,15 +50,17 @@ impl VolumeGeometry {
         //   1. scale world by max_phys / phys_axis  (un-stretch non-isotropic data)
         //   2. translate by +0.5  (shift [-0.5,0.5] → [0,1])
         let scale = Vec3::new(max_phys / phys[0], max_phys / phys[1], max_phys / phys[2]);
-        let world_to_volume =
-            Mat4::from_translation(Vec3::splat(0.5)) * Mat4::from_scale(scale);
+        let world_to_volume = Mat4::from_translation(Vec3::splat(0.5)) * Mat4::from_scale(scale);
 
         // Step size: traverse the unit cube with ~2 samples per voxel along the
         // longest axis.
         let max_dim = nx.max(ny).max(nz) as f32;
         let step_size = 1.0 / (max_dim * 2.0);
 
-        Self { world_to_volume, step_size }
+        Self {
+            world_to_volume,
+            step_size,
+        }
     }
 }
 
@@ -88,7 +90,7 @@ impl Renderer {
 
         let vol_tex = texture::upload_volume(&gpu, volume);
 
-        let eye_width  = DEFAULT_EYE_WIDTH;
+        let eye_width = DEFAULT_EYE_WIDTH;
         let eye_height = DEFAULT_EYE_HEIGHT;
 
         let pipeline = pipeline::GpuPipeline::new(&gpu, &vol_tex, eye_width, eye_height);
@@ -115,7 +117,7 @@ impl Renderer {
         if eye_width == self.eye_width && eye_height == self.eye_height {
             return;
         }
-        self.eye_width  = eye_width;
+        self.eye_width = eye_width;
         self.eye_height = eye_height;
         self.pipeline.resize(&self.gpu, eye_width, eye_height);
         self.readback.resize(&self.gpu, eye_width, eye_height);
@@ -135,13 +137,15 @@ impl Renderer {
         self.pipeline.update_camera(&self.gpu, &uniforms);
         self.pipeline.render(&self.gpu);
 
-        let eye_width  = self.eye_width;
+        let eye_width = self.eye_width;
         let eye_height = self.eye_height;
-        let result = self.readback.submit_and_read(&self.gpu, &self.pipeline.output_texture);
+        let result = self
+            .readback
+            .submit_and_read(&self.gpu, &self.pipeline.output_texture);
 
         Ok(result.map(|rgba| StereoFrame {
             rgba,
-            width:  eye_width * 2,
+            width: eye_width * 2,
             height: eye_height,
         }))
     }
@@ -166,24 +170,24 @@ impl Renderer {
             0.01,
             1000.0,
         );
-        let proj_left  = pose.proj_left .unwrap_or(fallback_proj);
+        let proj_left = pose.proj_left.unwrap_or(fallback_proj);
         let proj_right = pose.proj_right.unwrap_or(fallback_proj);
 
         let (left_view, right_view) = camera::compute_stereo_views(pose, self.ipd);
-        let left_view_inv  = left_view.inverse();
+        let left_view_inv = left_view.inverse();
         let right_view_inv = right_view.inverse();
 
-        let max_steps = (1.0 / self.geometry.step_size) as f32 * 1.5; // headroom
+        let max_steps = (1.0 / self.geometry.step_size) * 1.5; // headroom
 
         // Shift the volume centre to (0, 0, -viewing_distance) in world space.
         let depth_offset = Mat4::from_translation(Vec3::new(0.0, 0.0, self.viewing_distance));
         let world_to_volume = self.geometry.world_to_volume * depth_offset;
 
         CameraUniforms {
-            left_view_inv:   left_view_inv.to_cols_array(),
-            left_proj_inv:   proj_left.inverse().to_cols_array(),
-            right_view_inv:  right_view_inv.to_cols_array(),
-            right_proj_inv:  proj_right.inverse().to_cols_array(),
+            left_view_inv: left_view_inv.to_cols_array(),
+            left_proj_inv: proj_left.inverse().to_cols_array(),
+            right_view_inv: right_view_inv.to_cols_array(),
+            right_proj_inv: proj_right.inverse().to_cols_array(),
             world_to_volume: world_to_volume.to_cols_array(),
             params: [
                 self.eye_width as f32,
@@ -229,18 +233,32 @@ mod tests {
         };
 
         // Double-buffered readback: first call returns None (warmup), second returns data.
-        renderer.render_frame(&pose).expect("warmup render_frame failed");
-        let frame = renderer.render_frame(&pose)
+        renderer
+            .render_frame(&pose)
+            .expect("warmup render_frame failed");
+        let frame = renderer
+            .render_frame(&pose)
             .expect("render_frame failed")
             .expect("expected Some on second call");
-        assert_eq!(frame.width,  renderer.eye_width  * 2);
+        assert_eq!(frame.width, renderer.eye_width * 2);
         assert_eq!(frame.height, renderer.eye_height);
         assert_eq!(frame.rgba.len(), (frame.width * frame.height * 4) as usize);
 
         // At least some pixels should be non-black (the volume should be visible)
-        let non_black = frame.rgba.chunks(4).filter(|px| px[0] > 10 || px[1] > 10 || px[2] > 10).count();
-        println!("Non-black pixels: {} / {}", non_black, frame.width * frame.height);
-        assert!(non_black > 100, "Expected visible volume pixels, got {non_black}");
+        let non_black = frame
+            .rgba
+            .chunks(4)
+            .filter(|px| px[0] > 10 || px[1] > 10 || px[2] > 10)
+            .count();
+        println!(
+            "Non-black pixels: {} / {}",
+            non_black,
+            frame.width * frame.height
+        );
+        assert!(
+            non_black > 100,
+            "Expected visible volume pixels, got {non_black}"
+        );
     }
 
     #[test]
@@ -262,7 +280,8 @@ mod tests {
         };
 
         renderer.render_frame(&pose).expect("warmup render failed");
-        let frame = renderer.render_frame(&pose)
+        let frame = renderer
+            .render_frame(&pose)
             .expect("render failed")
             .expect("expected Some on second call");
 
@@ -276,12 +295,16 @@ mod tests {
         let mut differences = 0usize;
         for row in 0..output_height as usize {
             let row_start = row * row_bytes;
-            let left  = &frame.rgba[row_start..row_start + eye_bytes];
+            let left = &frame.rgba[row_start..row_start + eye_bytes];
             let right = &frame.rgba[row_start + eye_bytes..row_start + eye_bytes * 2];
             differences += left.iter().zip(right).filter(|(a, b)| a != b).count();
         }
         println!("Stereo byte differences: {differences}");
-        assert!(differences > 0, "Left and right eye images should differ (IPD={} m)", renderer.ipd);
+        assert!(
+            differences > 0,
+            "Left and right eye images should differ (IPD={} m)",
+            renderer.ipd
+        );
     }
 
     #[test]
@@ -296,7 +319,7 @@ mod tests {
         };
 
         renderer.resize(512, 512);
-        assert_eq!(renderer.eye_width,  512);
+        assert_eq!(renderer.eye_width, 512);
         assert_eq!(renderer.eye_height, 512);
 
         let pose = HeadPose {
@@ -306,11 +329,14 @@ mod tests {
             proj_right: None,
         };
         // After resize the double-buffer pipeline resets — need a warmup call again.
-        renderer.render_frame(&pose).expect("warmup after resize failed");
-        let frame = renderer.render_frame(&pose)
+        renderer
+            .render_frame(&pose)
+            .expect("warmup after resize failed");
+        let frame = renderer
+            .render_frame(&pose)
             .expect("render after resize failed")
             .expect("expected Some on second call after resize");
-        assert_eq!(frame.width,  1024);
+        assert_eq!(frame.width, 1024);
         assert_eq!(frame.height, 512);
         assert_eq!(frame.rgba.len(), (1024 * 512 * 4) as usize);
     }
@@ -332,7 +358,9 @@ mod tests {
         let volume = synthetic_volume();
         let geom = VolumeGeometry::from_volume(&volume);
         // Point at (0.5, 0.5, 0.5) in world space should map to (1.0, 1.0, 1.0) in volume
-        let corner = geom.world_to_volume.transform_point3(glam::Vec3::splat(0.5));
+        let corner = geom
+            .world_to_volume
+            .transform_point3(glam::Vec3::splat(0.5));
         assert!((corner.x - 1.0).abs() < 1e-5, "corner x: {}", corner.x);
     }
 }

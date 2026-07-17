@@ -54,7 +54,11 @@ impl AppState {
 
         let pairing = Arc::new(PairingState::generate());
 
-        Ok(Arc::new(Self { pairing, volume, config }))
+        Ok(Arc::new(Self {
+            pairing,
+            volume,
+            config,
+        }))
     }
 }
 

@@ -65,5 +65,9 @@ pub fn upload_volume(gpu: &GpuContext, volume: &VolumeData) -> VolumeTexture {
         ..Default::default()
     });
 
-    VolumeTexture { texture, view, sampler }
+    VolumeTexture {
+        texture,
+        view,
+        sampler,
+    }
 }

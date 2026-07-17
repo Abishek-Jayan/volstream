@@ -2,7 +2,6 @@
 ///
 /// Exercises: volume-loader → renderer → encoder in sequence.
 /// GPU tests are skipped gracefully when no adapter is available (CI).
-
 use std::path::PathBuf;
 
 fn test_nrrd_path() -> PathBuf {
@@ -25,7 +24,12 @@ fn load_test_nrrd() {
     let volume = volume_loader::load_volume(&path).expect("load_volume failed");
 
     // Header says: sizes: 818 773 548
-    assert_eq!(volume.dims, [818, 773, 548], "unexpected dims: {:?}", volume.dims);
+    assert_eq!(
+        volume.dims,
+        [818, 773, 548],
+        "unexpected dims: {:?}",
+        volume.dims
+    );
     assert_eq!(
         volume.data.len(),
         (818u64 * 773 * 548) as usize,
@@ -33,7 +37,11 @@ fn load_test_nrrd() {
     );
 
     let min = volume.data.iter().cloned().fold(f32::INFINITY, f32::min);
-    let max = volume.data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let max = volume
+        .data
+        .iter()
+        .cloned()
+        .fold(f32::NEG_INFINITY, f32::max);
     assert!(min >= 0.0, "min below 0: {min}");
     assert!(max <= 1.0, "max above 1: {max}");
 
@@ -66,22 +74,21 @@ fn render_frame_from_test_nrrd() {
     let pose = renderer::HeadPose {
         position: glam::Vec3::new(0.0, 0.0, 2.0),
         orientation: glam::Quat::IDENTITY,
-        proj_left:  None,
+        proj_left: None,
         proj_right: None,
     };
 
     // Double-buffered readback: first call returns None (warmup).
-    rend.render_frame(&pose).expect("warmup render_frame failed");
-    let frame = rend.render_frame(&pose)
+    rend.render_frame(&pose)
+        .expect("warmup render_frame failed");
+    let frame = rend
+        .render_frame(&pose)
         .expect("render_frame failed")
         .expect("expected Some on second call");
 
-    assert_eq!(frame.width,  rend.eye_width  * 2);
+    assert_eq!(frame.width, rend.eye_width * 2);
     assert_eq!(frame.height, rend.eye_height);
-    assert_eq!(
-        frame.rgba.len(),
-        (frame.width * frame.height * 4) as usize
-    );
+    assert_eq!(frame.rgba.len(), (frame.width * frame.height * 4) as usize);
 
     let non_black = frame
         .rgba
@@ -118,17 +125,19 @@ fn encode_frame_from_test_nrrd() {
     let pose = renderer::HeadPose {
         position: glam::Vec3::new(0.0, 0.0, 2.0),
         orientation: glam::Quat::IDENTITY,
-        proj_left:  None,
+        proj_left: None,
         proj_right: None,
     };
     // Double-buffered readback: first call returns None (warmup).
-    rend.render_frame(&pose).expect("warmup render_frame failed");
-    let frame = rend.render_frame(&pose)
+    rend.render_frame(&pose)
+        .expect("warmup render_frame failed");
+    let frame = rend
+        .render_frame(&pose)
         .expect("render_frame failed")
         .expect("expected Some on second call");
 
-    let mut enc = encoder::default_encoder(frame.width, frame.height, 72, 8000)
-        .expect("encoder init failed");
+    let mut enc =
+        encoder::default_encoder(frame.width, frame.height, 72, 8000).expect("encoder init failed");
 
     let nalus = enc
         .encode(&frame.rgba, frame.width, frame.height)
@@ -137,8 +146,8 @@ fn encode_frame_from_test_nrrd() {
     assert!(!nalus.is_empty(), "Encoder produced no bytes");
 
     // Annex-B start code: 00 00 00 01 or 00 00 01
-    let has_start_code = nalus.windows(4).any(|w| w == [0, 0, 0, 1])
-        || nalus.windows(3).any(|w| w == [0, 0, 1]);
+    let has_start_code =
+        nalus.windows(4).any(|w| w == [0, 0, 0, 1]) || nalus.windows(3).any(|w| w == [0, 0, 1]);
     assert!(has_start_code, "Output missing Annex-B H.264 start code");
 
     println!("Encode OK: {} bytes of H.264 NAL units", nalus.len());

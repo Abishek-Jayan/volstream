@@ -1,9 +1,9 @@
 mod nrrd;
-mod zarr;
 mod volume;
+mod zarr;
 
-pub use volume::VolumeData;
 pub use nrrd::load_nrrd;
+pub use volume::VolumeData;
 pub use zarr::{load_zarr, load_zarr_with_limit};
 
 use std::path::Path;

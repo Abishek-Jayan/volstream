@@ -64,7 +64,10 @@ mod tests {
         let mut enc = H264Encoder::new(256, 256, 30, 2000).expect("init");
         let rgba = make_rgba_frame(256, 256);
         let nalus = enc.encode(&rgba, 256, 256).expect("encode");
-        assert!(!nalus.is_empty(), "expected non-empty NAL output on first frame");
+        assert!(
+            !nalus.is_empty(),
+            "expected non-empty NAL output on first frame"
+        );
     }
 
     #[test]

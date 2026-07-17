@@ -1,4 +1,4 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
@@ -91,12 +91,12 @@ async fn handle_signal(mut ws: WebSocket, state: Arc<AppState>) {
 
     let mut session = WebRtcSession::new();
     let (offer, pending) = match session.create_offer(ice_addr) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!("signal: create_offer failed: {e}");
-                return;
-            }
-        };
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("signal: create_offer failed: {e}");
+            return;
+        }
+    };
 
     // ── Step 1: receive pair code ──────────────────────────────────────────────
 
@@ -126,7 +126,10 @@ async fn handle_signal(mut ws: WebSocket, state: Arc<AppState>) {
 
     // ── Step 2: send offer ─────────────────────────────────────────────────────
 
-    if send_json(&mut ws, &ServerMsg::Offer { sdp: offer }).await.is_none() {
+    if send_json(&mut ws, &ServerMsg::Offer { sdp: offer })
+        .await
+        .is_none()
+    {
         tracing::warn!("signal: WebSocket closed while sending offer");
         state.pairing.disconnect();
         return;
@@ -164,7 +167,11 @@ async fn handle_signal(mut ws: WebSocket, state: Arc<AppState>) {
 
     // `_no_volume_guard` keeps these senders/receivers alive in the no-volume
     // path so the WebRTC session starts cleanly.
-    let _no_volume_guard: Option<(mpsc::Sender<Vec<u8>>, watch::Receiver<Option<HeadPose>>, mpsc::Sender<[f32; 4]>)>;
+    let _no_volume_guard: Option<(
+        mpsc::Sender<Vec<u8>>,
+        watch::Receiver<Option<HeadPose>>,
+        mpsc::Sender<[f32; 4]>,
+    )>;
 
     if let Some(volume) = state.volume.clone() {
         let fps = state.config.fps;
@@ -176,8 +183,17 @@ async fn handle_signal(mut ws: WebSocket, state: Arc<AppState>) {
         let prediction_horizon_secs = state.config.prediction_horizon_secs;
         tokio::task::spawn_blocking(move || {
             crate::render_loop::run(
-                volume, fps, bitrate, ipd, viewing_distance, render_scale, sample_density,
-                prediction_horizon_secs, pose_rx, video_tx, pose_tag_tx,
+                volume,
+                fps,
+                bitrate,
+                ipd,
+                viewing_distance,
+                render_scale,
+                sample_density,
+                prediction_horizon_secs,
+                pose_rx,
+                video_tx,
+                pose_tag_tx,
             );
         });
         _no_volume_guard = None;
@@ -189,7 +205,9 @@ async fn handle_signal(mut ws: WebSocket, state: Arc<AppState>) {
     // Spawn the WebRTC drive loop; it resets pairing when it exits.
     let pairing: Arc<PairingState> = state.pairing.clone();
     tokio::spawn(async move {
-        session.run(socket, lan_addr, video_rx, pose_tx, pose_tag_rx).await;
+        session
+            .run(socket, lan_addr, video_rx, pose_tx, pose_tag_rx)
+            .await;
         pairing.disconnect();
         tracing::info!("WebRTC session ended — pairing reset");
     });

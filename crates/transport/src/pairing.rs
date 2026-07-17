@@ -66,7 +66,11 @@ mod tests {
     #[test]
     fn wrong_code_is_rejected() {
         let state = PairingState::generate();
-        let wrong = if state.code == "000000" { "000001" } else { "000000" };
+        let wrong = if state.code == "000000" {
+            "000001"
+        } else {
+            "000000"
+        };
         assert!(!state.try_pair(wrong));
         assert!(!state.is_connected());
     }

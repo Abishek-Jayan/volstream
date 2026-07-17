@@ -40,7 +40,12 @@ pub fn default_encoder(
 
     #[cfg(feature = "h264")]
     {
-        return Ok(Box::new(h264::H264Encoder::new(width, height, fps, bitrate_kbps)?));
+        return Ok(Box::new(h264::H264Encoder::new(
+            width,
+            height,
+            fps,
+            bitrate_kbps,
+        )?));
     }
 
     #[allow(unreachable_code)]

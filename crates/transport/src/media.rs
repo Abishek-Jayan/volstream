@@ -37,7 +37,10 @@ impl WebRtcSession {
             .enable_h264(true)
             .build();
 
-        WebRtcSession { rtc, video_mid: None }
+        WebRtcSession {
+            rtc,
+            video_mid: None,
+        }
     }
 
     /// Register `local_addr` as an ICE host candidate, then generate the SDP offer.
@@ -124,7 +127,13 @@ impl WebRtcSession {
                         }
                     }
                     Ok(Output::Event(event)) => {
-                        handle_event(&mut self.rtc, event, &pose_tx, &mut connected, &mut channel_id);
+                        handle_event(
+                            &mut self.rtc,
+                            event,
+                            &pose_tx,
+                            &mut connected,
+                            &mut channel_id,
+                        );
                     }
                 }
             };
@@ -184,17 +193,14 @@ impl Default for WebRtcSession {
 }
 
 /// Write one encoded H.264 frame as an RTP sample.
-fn write_video_frame(
-    rtc: &mut Rtc,
-    video_mid: Option<Mid>,
-    data: &[u8],
-    session_start: Instant,
-) {
+fn write_video_frame(rtc: &mut Rtc, video_mid: Option<Mid>, data: &[u8], session_start: Instant) {
     let Some(mid) = video_mid else { return };
 
     // Borrow #1: read the payload type for H.264.
     let pt = {
-        let Some(writer) = rtc.writer(mid) else { return };
+        let Some(writer) = rtc.writer(mid) else {
+            return;
+        };
         let found = writer
             .payload_params()
             .find(|p| p.spec().codec == Codec::H264)
@@ -208,11 +214,16 @@ fn write_video_frame(
 
     // RTP timestamp: 90 kHz clock derived from wall-clock elapsed time.
     let elapsed_secs = session_start.elapsed().as_secs_f64();
-    let rtp_time = MediaTime::new((elapsed_secs * 90_000.0) as u64, str0m::media::Frequency::NINETY_KHZ);
+    let rtp_time = MediaTime::new(
+        (elapsed_secs * 90_000.0) as u64,
+        str0m::media::Frequency::NINETY_KHZ,
+    );
     let wallclock = Instant::now();
 
     // Borrow #2: write the frame.
-    let Some(writer) = rtc.writer(mid) else { return };
+    let Some(writer) = rtc.writer(mid) else {
+        return;
+    };
     if let Err(e) = writer.write(pt, wallclock, rtp_time, data.to_vec()) {
         tracing::debug!("WebRTC writer.write: {e}");
     }
@@ -269,7 +280,9 @@ fn handle_event(
 /// ```
 fn send_pose_tag(rtc: &mut Rtc, channel_id: Option<ChannelId>, orient: &[f32; 4]) {
     let Some(id) = channel_id else { return };
-    let Some(mut ch) = rtc.channel(id) else { return };
+    let Some(mut ch) = rtc.channel(id) else {
+        return;
+    };
 
     let mut buf = [0u8; POSE_TAG_SIZE];
     buf[0] = POSE_TAG_MAGIC;

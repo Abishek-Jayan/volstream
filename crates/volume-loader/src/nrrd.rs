@@ -16,8 +16,9 @@ pub fn load_nrrd(path: &Path) -> Result<VolumeData, VolumeError> {
 fn parse_nrrd(bytes: &[u8]) -> Result<VolumeData, VolumeError> {
     // Find the blank line separating header from data.
     // NRRD spec: header ends at the first blank line ("\n\n" or "\r\n\r\n").
-    let header_end = find_header_end(bytes)
-        .ok_or_else(|| VolumeError::Parse("No blank line found separating NRRD header from data".into()))?;
+    let header_end = find_header_end(bytes).ok_or_else(|| {
+        VolumeError::Parse("No blank line found separating NRRD header from data".into())
+    })?;
 
     let header_bytes = &bytes[..header_end];
     let data_start = header_end + blank_line_len(bytes, header_end);
@@ -28,7 +29,10 @@ fn parse_nrrd(bytes: &[u8]) -> Result<VolumeData, VolumeError> {
     // Validate magic line
     let first_line = header_str.lines().next().unwrap_or("");
     if !first_line.starts_with("NRRD") {
-        return Err(VolumeError::Parse(format!("Not an NRRD file (magic: {:?})", first_line)));
+        return Err(VolumeError::Parse(format!(
+            "Not an NRRD file (magic: {:?})",
+            first_line
+        )));
     }
 
     let fields = parse_header_fields(header_str);
@@ -41,13 +45,17 @@ fn parse_nrrd(bytes: &[u8]) -> Result<VolumeData, VolumeError> {
 
     if dimension != 3 {
         return Err(VolumeError::Unsupported(format!(
-            "Only 3D NRRD files are supported, got dimension={}", dimension
+            "Only 3D NRRD files are supported, got dimension={}",
+            dimension
         )));
     }
 
     let sizes = parse_sizes(fields.get("sizes").map(|s| s.as_str()).unwrap_or(""))?;
     if sizes.len() != 3 {
-        return Err(VolumeError::Parse(format!("Expected 3 sizes, got {}", sizes.len())));
+        return Err(VolumeError::Parse(format!(
+            "Expected 3 sizes, got {}",
+            sizes.len()
+        )));
     }
 
     let spacing = parse_spacing(&fields)?;
@@ -62,7 +70,9 @@ fn parse_nrrd(bytes: &[u8]) -> Result<VolumeData, VolumeError> {
     let expected = sizes[0] * sizes[1] * sizes[2];
     if data.len() != expected {
         return Err(VolumeError::Parse(format!(
-            "Data length mismatch: expected {} voxels, got {}", expected, data.len()
+            "Data length mismatch: expected {} voxels, got {}",
+            expected,
+            data.len()
         )));
     }
 
@@ -70,7 +80,12 @@ fn parse_nrrd(bytes: &[u8]) -> Result<VolumeData, VolumeError> {
 
     tracing::info!(
         "Loaded NRRD: {}x{}x{}, spacing={:?}, range=({:.2},{:.2})",
-        sizes[0], sizes[1], sizes[2], spacing, range.0, range.1
+        sizes[0],
+        sizes[1],
+        sizes[2],
+        spacing,
+        range.0,
+        range.1
     );
 
     Ok(VolumeData::new(
@@ -88,8 +103,10 @@ fn find_header_end(bytes: &[u8]) -> Option<usize> {
             return Some(i + 1); // position of the second \n
         }
         if i + 3 < bytes.len()
-            && bytes[i] == b'\r' && bytes[i + 1] == b'\n'
-            && bytes[i + 2] == b'\r' && bytes[i + 3] == b'\n'
+            && bytes[i] == b'\r'
+            && bytes[i + 1] == b'\n'
+            && bytes[i + 2] == b'\r'
+            && bytes[i + 3] == b'\n'
         {
             return Some(i + 2); // position of the second \r\n start
         }
@@ -100,8 +117,10 @@ fn find_header_end(bytes: &[u8]) -> Option<usize> {
 fn blank_line_len(bytes: &[u8], pos: usize) -> usize {
     // Skip past the blank line delimiter
     if pos + 3 < bytes.len()
-        && bytes[pos] == b'\r' && bytes[pos + 1] == b'\n'
-        && bytes[pos + 2] == b'\r' && bytes[pos + 3] == b'\n'
+        && bytes[pos] == b'\r'
+        && bytes[pos + 1] == b'\n'
+        && bytes[pos + 2] == b'\r'
+        && bytes[pos + 3] == b'\n'
     {
         2 // already consumed first \r\n in find_header_end, skip second
     } else {
@@ -128,7 +147,10 @@ fn parse_header_fields(header: &str) -> HashMap<String, String> {
 
 fn parse_sizes(s: &str) -> Result<Vec<usize>, VolumeError> {
     s.split_whitespace()
-        .map(|v| v.parse::<usize>().map_err(|_| VolumeError::Parse(format!("Invalid size value: {}", v))))
+        .map(|v| {
+            v.parse::<usize>()
+                .map_err(|_| VolumeError::Parse(format!("Invalid size value: {}", v)))
+        })
         .collect()
 }
 
@@ -170,7 +192,9 @@ fn parse_space_directions(s: &str) -> Result<[f32; 3], VolumeError> {
         // Read until ')'
         let mut vec_str = String::new();
         for c in chars.by_ref() {
-            if c == ')' { break; }
+            if c == ')' {
+                break;
+            }
             vec_str.push(c);
         }
 
@@ -186,7 +210,8 @@ fn parse_space_directions(s: &str) -> Result<[f32; 3], VolumeError> {
             .collect();
 
         if components.len() == 3 {
-            let magnitude = (components[0].powi(2) + components[1].powi(2) + components[2].powi(2)).sqrt();
+            let magnitude =
+                (components[0].powi(2) + components[1].powi(2) + components[2].powi(2)).sqrt();
             spacings[idx] = if magnitude > 0.0 { magnitude } else { 1.0 };
         }
         idx += 1;
@@ -204,18 +229,21 @@ fn decode_data(data: &[u8], encoding: &str) -> Result<Vec<u8>, VolumeError> {
             decoder.read_to_end(&mut out)?;
             Ok(out)
         }
-        other => Err(VolumeError::Unsupported(format!("NRRD encoding '{}' not supported", other))),
+        other => Err(VolumeError::Unsupported(format!(
+            "NRRD encoding '{}' not supported",
+            other
+        ))),
     }
 }
 
-fn convert_to_f32(raw: &[u8], data_type: &str, little_endian: bool) -> Result<Vec<f32>, VolumeError> {
+fn convert_to_f32(
+    raw: &[u8],
+    data_type: &str,
+    little_endian: bool,
+) -> Result<Vec<f32>, VolumeError> {
     match data_type.to_lowercase().replace(" ", "").as_str() {
-        "uint8" | "uchar" | "unsignedchar" => {
-            Ok(raw.iter().map(|&v| v as f32).collect())
-        }
-        "int8" | "char" | "signedchar" => {
-            Ok(raw.iter().map(|&v| v as i8 as f32).collect())
-        }
+        "uint8" | "uchar" | "unsignedchar" => Ok(raw.iter().map(|&v| v as f32).collect()),
+        "int8" | "char" | "signedchar" => Ok(raw.iter().map(|&v| v as i8 as f32).collect()),
         "uint16" | "ushort" => {
             read_u16(raw, little_endian).map(|v| v.into_iter().map(|x| x as f32).collect())
         }
@@ -229,51 +257,86 @@ fn convert_to_f32(raw: &[u8], data_type: &str, little_endian: bool) -> Result<Ve
             read_u32(raw, little_endian).map(|v| v.into_iter().map(|x| x as i32 as f32).collect())
         }
         "float" => read_f32(raw, little_endian),
-        "double" => {
-            read_f64(raw, little_endian).map(|v| v.into_iter().map(|x| x as f32).collect())
-        }
-        other => Err(VolumeError::Unsupported(format!("NRRD data type '{}' not supported", other))),
+        "double" => read_f64(raw, little_endian).map(|v| v.into_iter().map(|x| x as f32).collect()),
+        other => Err(VolumeError::Unsupported(format!(
+            "NRRD data type '{}' not supported",
+            other
+        ))),
     }
 }
 
 fn read_u16(raw: &[u8], little_endian: bool) -> Result<Vec<u16>, VolumeError> {
-    if raw.len() % 2 != 0 {
+    if !raw.len().is_multiple_of(2) {
         return Err(VolumeError::Parse("uint16 data has odd byte count".into()));
     }
-    Ok(raw.chunks_exact(2).map(|c| {
-        let arr = [c[0], c[1]];
-        if little_endian { u16::from_le_bytes(arr) } else { u16::from_be_bytes(arr) }
-    }).collect())
+    Ok(raw
+        .chunks_exact(2)
+        .map(|c| {
+            let arr = [c[0], c[1]];
+            if little_endian {
+                u16::from_le_bytes(arr)
+            } else {
+                u16::from_be_bytes(arr)
+            }
+        })
+        .collect())
 }
 
 fn read_u32(raw: &[u8], little_endian: bool) -> Result<Vec<u32>, VolumeError> {
-    if raw.len() % 4 != 0 {
-        return Err(VolumeError::Parse("uint32 data has byte count not divisible by 4".into()));
+    if !raw.len().is_multiple_of(4) {
+        return Err(VolumeError::Parse(
+            "uint32 data has byte count not divisible by 4".into(),
+        ));
     }
-    Ok(raw.chunks_exact(4).map(|c| {
-        let arr = [c[0], c[1], c[2], c[3]];
-        if little_endian { u32::from_le_bytes(arr) } else { u32::from_be_bytes(arr) }
-    }).collect())
+    Ok(raw
+        .chunks_exact(4)
+        .map(|c| {
+            let arr = [c[0], c[1], c[2], c[3]];
+            if little_endian {
+                u32::from_le_bytes(arr)
+            } else {
+                u32::from_be_bytes(arr)
+            }
+        })
+        .collect())
 }
 
 fn read_f32(raw: &[u8], little_endian: bool) -> Result<Vec<f32>, VolumeError> {
-    if raw.len() % 4 != 0 {
-        return Err(VolumeError::Parse("float32 data has byte count not divisible by 4".into()));
+    if !raw.len().is_multiple_of(4) {
+        return Err(VolumeError::Parse(
+            "float32 data has byte count not divisible by 4".into(),
+        ));
     }
-    Ok(raw.chunks_exact(4).map(|c| {
-        let arr = [c[0], c[1], c[2], c[3]];
-        if little_endian { f32::from_le_bytes(arr) } else { f32::from_be_bytes(arr) }
-    }).collect())
+    Ok(raw
+        .chunks_exact(4)
+        .map(|c| {
+            let arr = [c[0], c[1], c[2], c[3]];
+            if little_endian {
+                f32::from_le_bytes(arr)
+            } else {
+                f32::from_be_bytes(arr)
+            }
+        })
+        .collect())
 }
 
 fn read_f64(raw: &[u8], little_endian: bool) -> Result<Vec<f64>, VolumeError> {
-    if raw.len() % 8 != 0 {
-        return Err(VolumeError::Parse("float64 data has byte count not divisible by 8".into()));
+    if !raw.len().is_multiple_of(8) {
+        return Err(VolumeError::Parse(
+            "float64 data has byte count not divisible by 8".into(),
+        ));
     }
-    Ok(raw.chunks_exact(8).map(|c| {
-        let arr = [c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]];
-        if little_endian { f64::from_le_bytes(arr) } else { f64::from_be_bytes(arr) }
-    }).collect())
+    Ok(raw
+        .chunks_exact(8)
+        .map(|c| {
+            let arr = [c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]];
+            if little_endian {
+                f64::from_le_bytes(arr)
+            } else {
+                f64::from_be_bytes(arr)
+            }
+        })
+        .collect())
 }
 
 /// Normalize data to [0.0, 1.0]. Returns (normalized, (min, max)).
@@ -284,7 +347,9 @@ pub fn normalize(data: &[f32]) -> (Vec<f32>, (f64, f64)) {
     let normalized = if range < f64::EPSILON {
         vec![0.0f32; data.len()]
     } else {
-        data.iter().map(|&v| ((v as f64 - min) / range) as f32).collect()
+        data.iter()
+            .map(|&v| ((v as f64 - min) / range) as f32)
+            .collect()
     };
     (normalized, (min, max))
 }
@@ -375,7 +440,8 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_encoding() {
-        let bytes = b"NRRD0004\ntype: uint8\ndimension: 3\nsizes: 1 1 1\nencoding: bzip2\n\n\x00".to_vec();
+        let bytes =
+            b"NRRD0004\ntype: uint8\ndimension: 3\nsizes: 1 1 1\nencoding: bzip2\n\n\x00".to_vec();
         assert!(parse_nrrd(&bytes).is_err());
     }
 

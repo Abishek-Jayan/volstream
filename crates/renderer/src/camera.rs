@@ -8,7 +8,7 @@ pub struct HeadPose {
     /// Per-eye projection matrices as reported by the XR runtime
     /// (`XRView.projectionMatrix`, column-major, OpenGL z ∈ [-1, 1] convention).
     /// When `None`, the renderer falls back to its built-in perspective matrix.
-    pub proj_left:  Option<Mat4>,
+    pub proj_left: Option<Mat4>,
     pub proj_right: Option<Mat4>,
 }
 
@@ -17,7 +17,7 @@ impl Default for HeadPose {
         Self {
             position: Vec3::ZERO,
             orientation: Quat::IDENTITY,
-            proj_left:  None,
+            proj_left: None,
             proj_right: None,
         }
     }
@@ -64,7 +64,10 @@ mod tests {
         let right_pos = right.col(3);
 
         // The translation columns should be mirror images in X
-        assert!((left_pos.x + right_pos.x).abs() < 1e-5, "X offsets should cancel");
+        assert!(
+            (left_pos.x + right_pos.x).abs() < 1e-5,
+            "X offsets should cancel"
+        );
         assert!((left_pos.y - right_pos.y).abs() < 1e-5, "Y should be equal");
         assert!((left_pos.z - right_pos.z).abs() < 1e-5, "Z should be equal");
     }

@@ -23,7 +23,12 @@ impl VolumeData {
             (dims[0] * dims[1] * dims[2]) as usize,
             "data length must match dims"
         );
-        Self { dims, spacing, data, original_range }
+        Self {
+            dims,
+            spacing,
+            data,
+            original_range,
+        }
     }
 
     pub fn voxel_count(&self) -> usize {

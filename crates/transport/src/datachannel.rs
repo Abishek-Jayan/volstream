@@ -57,11 +57,11 @@ pub struct HeadPose {
 }
 
 /// Binary magic byte — first byte of every binary-format pose message.
-const BINARY_MAGIC:   u8 = 0x50; // 'P'
+const BINARY_MAGIC: u8 = 0x50; // 'P'
 const BINARY_VERSION: u8 = 0x01;
 
-const FLAG_HAS_IPD:      u16 = 1 << 0;
-const FLAG_HAS_PROJ:     u16 = 1 << 1;
+const FLAG_HAS_IPD: u16 = 1 << 0;
+const FLAG_HAS_PROJ: u16 = 1 << 1;
 const FLAG_HAS_EYE_DIMS: u16 = 1 << 2;
 
 /// Parse a `HeadPose` from a data-channel payload.
@@ -79,9 +79,15 @@ pub fn try_parse_pose(data: &[u8]) -> Option<HeadPose> {
 /// Encode a `HeadPose` to the compact binary wire format.
 pub fn encode_pose_binary(p: &HeadPose) -> Vec<u8> {
     let mut flags: u16 = 0;
-    if p.ipd.is_some()                          { flags |= FLAG_HAS_IPD; }
-    if p.proj_left.is_some() || p.proj_right.is_some() { flags |= FLAG_HAS_PROJ; }
-    if p.eye_width.is_some() || p.eye_height.is_some() { flags |= FLAG_HAS_EYE_DIMS; }
+    if p.ipd.is_some() {
+        flags |= FLAG_HAS_IPD;
+    }
+    if p.proj_left.is_some() || p.proj_right.is_some() {
+        flags |= FLAG_HAS_PROJ;
+    }
+    if p.eye_width.is_some() || p.eye_height.is_some() {
+        flags |= FLAG_HAS_EYE_DIMS;
+    }
 
     // Fixed header: magic(1) + version(1) + flags(2) + position(12) +
     //               orientation(16) + timestamp(8) = 40 bytes.
@@ -89,8 +95,12 @@ pub fn encode_pose_binary(p: &HeadPose) -> Vec<u8> {
     buf.push(BINARY_MAGIC);
     buf.push(BINARY_VERSION);
     buf.extend_from_slice(&flags.to_le_bytes());
-    for v in &p.position    { buf.extend_from_slice(&v.to_le_bytes()); }
-    for v in &p.orientation { buf.extend_from_slice(&v.to_le_bytes()); }
+    for v in &p.position {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in &p.orientation {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
     buf.extend_from_slice(&p.timestamp.to_le_bytes());
 
     if flags & FLAG_HAS_IPD != 0 {
@@ -98,11 +108,15 @@ pub fn encode_pose_binary(p: &HeadPose) -> Vec<u8> {
     }
     if flags & FLAG_HAS_PROJ != 0 {
         let zeros = [0f32; 16];
-        for v in p.proj_left .as_ref().unwrap_or(&zeros) { buf.extend_from_slice(&v.to_le_bytes()); }
-        for v in p.proj_right.as_ref().unwrap_or(&zeros) { buf.extend_from_slice(&v.to_le_bytes()); }
+        for v in p.proj_left.as_ref().unwrap_or(&zeros) {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+        for v in p.proj_right.as_ref().unwrap_or(&zeros) {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
     }
     if flags & FLAG_HAS_EYE_DIMS != 0 {
-        buf.extend_from_slice(&p.eye_width .unwrap_or(0).to_le_bytes());
+        buf.extend_from_slice(&p.eye_width.unwrap_or(0).to_le_bytes());
         buf.extend_from_slice(&p.eye_height.unwrap_or(0).to_le_bytes());
     }
     buf
@@ -111,28 +125,36 @@ pub fn encode_pose_binary(p: &HeadPose) -> Vec<u8> {
 // ── Internal binary parser ─────────────────────────────────────────────────────
 
 fn read_f32_le(data: &[u8], offset: usize) -> Option<f32> {
-    data.get(offset..offset + 4).map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+    data.get(offset..offset + 4)
+        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
 }
 fn read_u32_le(data: &[u8], offset: usize) -> Option<u32> {
-    data.get(offset..offset + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+    data.get(offset..offset + 4)
+        .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
 }
 fn read_u64_le(data: &[u8], offset: usize) -> Option<u64> {
-    data.get(offset..offset + 8).map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+    data.get(offset..offset + 8)
+        .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
 }
 fn read_u16_le(data: &[u8], offset: usize) -> Option<u16> {
-    data.get(offset..offset + 2).map(|b| u16::from_le_bytes(b.try_into().unwrap()))
+    data.get(offset..offset + 2)
+        .map(|b| u16::from_le_bytes(b.try_into().unwrap()))
 }
 
 fn parse_binary(data: &[u8]) -> Option<HeadPose> {
     // Minimum packet: magic(1) + version(1) + flags(2) + pos(12) + orient(16) + ts(8) = 40
-    if data.len() < 40 { return None; }
-    if data[0] != BINARY_MAGIC || data[1] != BINARY_VERSION { return None; }
+    if data.len() < 40 {
+        return None;
+    }
+    if data[0] != BINARY_MAGIC || data[1] != BINARY_VERSION {
+        return None;
+    }
 
     let flags = read_u16_le(data, 2)?;
 
     let position = [
-        read_f32_le(data,  4)?,
-        read_f32_le(data,  8)?,
+        read_f32_le(data, 4)?,
+        read_f32_le(data, 8)?,
         read_f32_le(data, 12)?,
     ];
     let orientation = [
@@ -154,11 +176,13 @@ fn parse_binary(data: &[u8]) -> Option<HeadPose> {
     };
 
     let (proj_left, proj_right) = if flags & FLAG_HAS_PROJ != 0 {
-        if data.len() < cursor + 128 { return None; }
-        let mut left  = [0f32; 16];
+        if data.len() < cursor + 128 {
+            return None;
+        }
+        let mut left = [0f32; 16];
         let mut right = [0f32; 16];
         for i in 0..16 {
-            left[i]  = read_f32_le(data, cursor + i * 4)?;
+            left[i] = read_f32_le(data, cursor + i * 4)?;
             right[i] = read_f32_le(data, cursor + 64 + i * 4)?;
         }
         cursor += 128;
@@ -168,7 +192,9 @@ fn parse_binary(data: &[u8]) -> Option<HeadPose> {
     };
 
     let (eye_width, eye_height) = if flags & FLAG_HAS_EYE_DIMS != 0 {
-        if data.len() < cursor + 8 { return None; }
+        if data.len() < cursor + 8 {
+            return None;
+        }
         let w = read_u32_le(data, cursor)?;
         let h = read_u32_le(data, cursor + 4)?;
         (Some(w), Some(h))
@@ -226,7 +252,8 @@ mod tests {
 
     #[test]
     fn parses_wire_format() {
-        let raw = br#"{"position":[0.1,-0.2,1.5],"orientation":[0.0,0.0,0.707,0.707],"timestamp":1000}"#;
+        let raw =
+            br#"{"position":[0.1,-0.2,1.5],"orientation":[0.0,0.0,0.707,0.707],"timestamp":1000}"#;
         let pose = try_parse_pose(raw).expect("valid pose");
         assert!((pose.position[0] - 0.1).abs() < 1e-6);
         assert_eq!(pose.timestamp, 1000);
@@ -241,7 +268,8 @@ mod tests {
 
     #[test]
     fn ignores_extra_fields() {
-        let raw = br#"{"position":[0,0,0],"orientation":[0,0,0,1],"timestamp":0,"extra":"ignored"}"#;
+        let raw =
+            br#"{"position":[0,0,0],"orientation":[0,0,0,1],"timestamp":0,"extra":"ignored"}"#;
         assert!(try_parse_pose(raw).is_some());
     }
 
@@ -269,7 +297,9 @@ mod tests {
 
     #[test]
     fn round_trips_with_proj_matrices() {
-        let identity = [1.,0.,0.,0., 0.,1.,0.,0., 0.,0.,1.,0., 0.,0.,0.,1.];
+        let identity = [
+            1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+        ];
         let pose = HeadPose {
             position: [0.0, 0.0, 0.0],
             orientation: [0.0, 0.0, 0.0, 1.0],
@@ -315,7 +345,7 @@ mod tests {
     fn parses_eye_dims_when_present() {
         let raw = br#"{"position":[0,0,0],"orientation":[0,0,0,1],"timestamp":0,"eye_width":1832,"eye_height":1920}"#;
         let pose = try_parse_pose(raw).expect("valid pose with eye dims");
-        assert_eq!(pose.eye_width,  Some(1832));
+        assert_eq!(pose.eye_width, Some(1832));
         assert_eq!(pose.eye_height, Some(1920));
     }
 
@@ -334,15 +364,17 @@ mod tests {
 
     #[test]
     fn binary_round_trip_with_all_fields() {
-        let mat = [1.,0.,0.,0., 0.,1.,0.,0., 0.,0.,1.,0., 0.,0.,0.,1.];
+        let mat = [
+            1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+        ];
         let pose = HeadPose {
             position: [1.5, -0.3, 2.0],
             orientation: [0.0, 0.707, 0.0, 0.707],
             timestamp: 99_000,
             ipd: Some(0.064),
-            proj_left:  Some(mat),
+            proj_left: Some(mat),
             proj_right: Some(mat),
-            eye_width:  Some(1832),
+            eye_width: Some(1832),
             eye_height: Some(1920),
         };
         let encoded = encode_pose_binary(&pose);
@@ -353,9 +385,9 @@ mod tests {
         assert!((parsed.orientation[1] - 0.707).abs() < 1e-5);
         assert_eq!(parsed.timestamp, 99_000);
         assert!((parsed.ipd.unwrap() - 0.064).abs() < 1e-6);
-        assert_eq!(parsed.proj_left,  Some(mat));
+        assert_eq!(parsed.proj_left, Some(mat));
         assert_eq!(parsed.proj_right, Some(mat));
-        assert_eq!(parsed.eye_width,  Some(1832));
+        assert_eq!(parsed.eye_width, Some(1832));
         assert_eq!(parsed.eye_height, Some(1920));
     }
 
@@ -391,4 +423,3 @@ mod tests {
         assert_eq!(encode_pose_binary(&identity_pose()).len(), 40);
     }
 }
-
