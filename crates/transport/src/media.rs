@@ -92,7 +92,7 @@ impl WebRtcSession {
     /// - `video_rx`     — encoded H.264 NAL-unit bytes, one `Vec<u8>` per frame.
     /// - `pose_tx`      — publishes the latest head pose for the render loop.
     /// - `pose_tag_rx`  — rendered-pose orientations from the encode thread,
-    ///                    forwarded to the client as ATW tags over the data channel.
+    ///   forwarded to the client as ATW tags over the data channel.
     pub async fn run(
         mut self,
         socket: UdpSocket,

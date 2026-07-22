@@ -406,7 +406,7 @@ mod tests {
                       space directions: (0.5,0,0) (0,0.5,0) (0,0,1.2)\n\
                       encoding: raw\n\n";
         let mut bytes = header.as_bytes().to_vec();
-        bytes.extend_from_slice(&vec![0u8; 8]);
+        bytes.extend_from_slice(&[0u8; 8]);
         let vol = parse_nrrd(&bytes).unwrap();
         assert!((vol.spacing[0] - 0.5).abs() < 1e-5);
         assert!((vol.spacing[1] - 0.5).abs() < 1e-5);

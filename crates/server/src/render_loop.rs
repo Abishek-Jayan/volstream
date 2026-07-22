@@ -173,6 +173,7 @@ fn scale_dims(w: u32, h: u32, scale: f32) -> (u32, u32) {
 ///                                                │
 ///                                           video_tx (cap=2) ──►  WebRTC RTP
 /// ```
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     volume: Arc<VolumeData>,
     fps: u32,
@@ -212,6 +213,7 @@ pub fn run(
 
 // ── Render thread ─────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn render_thread(
     volume: Arc<VolumeData>,
     fps: u32,

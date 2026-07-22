@@ -21,6 +21,14 @@ use transport::{
 
 use crate::state::AppState;
 
+/// Senders/receivers kept alive on the no-volume path so the WebRTC session
+/// starts cleanly. See `handle_signal`.
+type NoVolumeGuard = Option<(
+    mpsc::Sender<Vec<u8>>,
+    watch::Receiver<Option<HeadPose>>,
+    mpsc::Sender<[f32; 4]>,
+)>;
+
 pub fn create_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(index_handler))
@@ -167,11 +175,7 @@ async fn handle_signal(mut ws: WebSocket, state: Arc<AppState>) {
 
     // `_no_volume_guard` keeps these senders/receivers alive in the no-volume
     // path so the WebRTC session starts cleanly.
-    let _no_volume_guard: Option<(
-        mpsc::Sender<Vec<u8>>,
-        watch::Receiver<Option<HeadPose>>,
-        mpsc::Sender<[f32; 4]>,
-    )>;
+    let _no_volume_guard: NoVolumeGuard;
 
     if let Some(volume) = state.volume.clone() {
         let fps = state.config.fps;
@@ -213,12 +217,8 @@ async fn handle_signal(mut ws: WebSocket, state: Arc<AppState>) {
     });
 
     // ── Step 5: drain WebSocket until client closes ────────────────────────────
-    loop {
-        match ws.recv().await {
-            Some(Ok(_)) => {} // keep alive — absorb any trickle ICE or keepalive messages
-            _ => break,
-        }
-    }
+    // keep alive — absorb any trickle ICE or keepalive messages until client closes
+    while let Some(Ok(_)) = ws.recv().await {}
 }
 
 #[cfg(test)]
