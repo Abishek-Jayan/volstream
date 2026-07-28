@@ -76,17 +76,16 @@ async fn ws_signal_handler(
 async fn handle_signal(mut ws: WebSocket, state: Arc<AppState>) {
     // Bind the WebRTC media UDP socket to the configured LAN IP (not the
     // wildcard address) on a fixed port, so a single firewall rule for this
-    // port stays valid across restarts and the loopback socket below can
-    // bind the same port number on its own address.
+    // port stays valid across restarts.
     let lan_addr = SocketAddr::new(state.config.local_ip, state.config.media_port);
-    let socket = match UdpSocket::bind(lan_addr).await {
+    let lan_socket = match UdpSocket::bind(lan_addr).await {
         Ok(s) => s,
         Err(e) => {
-            tracing::error!("signal: failed to bind UDP socket: {e}");
+            tracing::error!("signal: failed to bind LAN UDP socket: {e}");
             return;
         }
     };
-    let udp_port = match socket.local_addr() {
+    let udp_port = match lan_socket.local_addr() {
         Ok(a) => a.port(),
         Err(e) => {
             tracing::error!("signal: failed to get UDP local addr: {e}");
@@ -94,11 +93,22 @@ async fn handle_signal(mut ws: WebSocket, state: Arc<AppState>) {
         }
     };
 
-    // The ICE candidate advertises the server's reachable IP and the bound UDP port.
-    let ice_addr = SocketAddr::new(state.config.local_ip, udp_port);
+    // Also bind a loopback socket on the same port and advertise it as a
+    // second ICE candidate. A browser on this machine (e.g. testing via
+    // `https://localhost:8080`) can then connect over loopback even when it
+    // can't hairpin back to the host's own LAN IP — notably on WSL2 with
+    // mirrored networking, where that hairpin path doesn't work reliably.
+    let loop_addr = SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), udp_port);
+    let loop_socket = match UdpSocket::bind(loop_addr).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("signal: failed to bind loopback UDP socket: {e}");
+            return;
+        }
+    };
 
     let mut session = WebRtcSession::new();
-    let (offer, pending) = match session.create_offer(ice_addr) {
+    let (offer, pending) = match session.create_offer(&[lan_addr, loop_addr]) {
         Ok(p) => p,
         Err(e) => {
             tracing::error!("signal: create_offer failed: {e}");
@@ -210,7 +220,15 @@ async fn handle_signal(mut ws: WebSocket, state: Arc<AppState>) {
     let pairing: Arc<PairingState> = state.pairing.clone();
     tokio::spawn(async move {
         session
-            .run(socket, lan_addr, video_rx, pose_tx, pose_tag_rx)
+            .run(
+                lan_socket,
+                lan_addr,
+                loop_socket,
+                loop_addr,
+                video_rx,
+                pose_tx,
+                pose_tag_rx,
+            )
             .await;
         pairing.disconnect();
         tracing::info!("WebRTC session ended — pairing reset");

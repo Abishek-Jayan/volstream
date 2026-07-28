@@ -43,16 +43,24 @@ impl WebRtcSession {
         }
     }
 
-    /// Register `local_addr` as an ICE host candidate, then generate the SDP offer.
+    /// Register each of `local_addrs` as an ICE host candidate, then generate the SDP offer.
     ///
-    /// `local_addr` must be the address of the UDP socket that will be passed to [`run`].
+    /// Advertising more than one candidate (e.g. the LAN IP and loopback) lets the
+    /// browser pick whichever path actually connects — needed because on WSL2 with
+    /// mirrored networking, a browser on the same machine can fail to hairpin back
+    /// to the host's own LAN IP even though external devices reach it fine.
+    ///
+    /// Each address must be the bound address of a UDP socket passed to [`run`], in
+    /// the same order.
     pub fn create_offer(
         &mut self,
-        local_addr: SocketAddr,
+        local_addrs: &[SocketAddr],
     ) -> Result<(SdpOffer, SdpPendingOffer), crate::TransportError> {
-        let candidate = Candidate::host(local_addr, "udp")
-            .map_err(|e| crate::TransportError::WebRtc(e.to_string()))?;
-        self.rtc.add_local_candidate(candidate);
+        for local_addr in local_addrs {
+            let candidate = Candidate::host(*local_addr, "udp")
+                .map_err(|e| crate::TransportError::WebRtc(e.to_string()))?;
+            self.rtc.add_local_candidate(candidate);
+        }
 
         let mut change = self.rtc.sdp_api();
         let mid = change.add_media(MediaKind::Video, Direction::SendOnly, None, None);
@@ -87,21 +95,27 @@ impl WebRtcSession {
     ///
     /// This is the hot path — runs in its own tokio task.
     ///
-    /// - `socket`       — bound UDP socket that was used as `local_addr` in [`create_offer`].
-    /// - `local_addr`   — must match what was passed to `create_offer`.
+    /// - `lan_socket`/`lan_addr`   — UDP socket bound to the LAN-facing candidate
+    ///   passed to [`create_offer`], and its bound address.
+    /// - `loop_socket`/`loop_addr` — UDP socket bound to the loopback candidate
+    ///   passed to [`create_offer`], and its bound address.
     /// - `video_rx`     — encoded H.264 NAL-unit bytes, one `Vec<u8>` per frame.
     /// - `pose_tx`      — publishes the latest head pose for the render loop.
     /// - `pose_tag_rx`  — rendered-pose orientations from the encode thread,
     ///   forwarded to the client as ATW tags over the data channel.
+    #[allow(clippy::too_many_arguments)]
     pub async fn run(
         mut self,
-        socket: UdpSocket,
-        local_addr: SocketAddr,
+        lan_socket: UdpSocket,
+        lan_addr: SocketAddr,
+        loop_socket: UdpSocket,
+        loop_addr: SocketAddr,
         mut video_rx: mpsc::Receiver<Vec<u8>>,
         pose_tx: watch::Sender<Option<HeadPose>>,
         mut pose_tag_rx: mpsc::Receiver<[f32; 4]>,
     ) {
-        let mut buf = vec![0u8; 2048];
+        let mut lan_buf = vec![0u8; 2048];
+        let mut loop_buf = vec![0u8; 2048];
         let session_start = Instant::now();
         let mut connected = false;
         let mut channel_id: Option<ChannelId> = None;
@@ -122,6 +136,12 @@ impl WebRtcSession {
                     }
                     Ok(Output::Timeout(t)) => break t,
                     Ok(Output::Transmit(t)) => {
+                        // Send from whichever socket owns the local candidate str0m picked.
+                        let socket = if t.source == loop_addr {
+                            &loop_socket
+                        } else {
+                            &lan_socket
+                        };
                         if let Err(e) = socket.send_to(&t.contents, t.destination).await {
                             tracing::warn!("WebRTC UDP send: {e}");
                         }
@@ -142,15 +162,26 @@ impl WebRtcSession {
             let wait = timeout.saturating_duration_since(Instant::now());
 
             tokio::select! {
-                result = socket.recv_from(&mut buf) => {
+                result = lan_socket.recv_from(&mut lan_buf) => {
                     match result {
                         Ok((n, src)) => {
-                            let data = &buf[..n];
-                            if let Ok(recv) = Receive::new(Protocol::Udp, src, local_addr, data) {
+                            let data = &lan_buf[..n];
+                            if let Ok(recv) = Receive::new(Protocol::Udp, src, lan_addr, data) {
                                 let _ = self.rtc.handle_input(Input::Receive(Instant::now(), recv));
                             }
                         }
-                        Err(e) => tracing::warn!("WebRTC UDP recv: {e}"),
+                        Err(e) => tracing::warn!("WebRTC UDP recv (LAN): {e}"),
+                    }
+                }
+                result = loop_socket.recv_from(&mut loop_buf) => {
+                    match result {
+                        Ok((n, src)) => {
+                            let data = &loop_buf[..n];
+                            if let Ok(recv) = Receive::new(Protocol::Udp, src, loop_addr, data) {
+                                let _ = self.rtc.handle_input(Input::Receive(Instant::now(), recv));
+                            }
+                        }
+                        Err(e) => tracing::warn!("WebRTC UDP recv (loopback): {e}"),
                     }
                 }
                 _ = tokio::time::sleep(wait) => {
@@ -314,7 +345,7 @@ mod tests {
     fn create_offer_returns_sdp() {
         let mut session = WebRtcSession::new();
         let (offer, _pending) = session
-            .create_offer(localhost_addr())
+            .create_offer(&[localhost_addr()])
             .expect("create_offer should succeed");
 
         // SDP must contain H.264 and the data channel application line
@@ -329,7 +360,7 @@ mod tests {
     fn create_offer_sets_video_mid() {
         let mut session = WebRtcSession::new();
         assert!(session.video_mid.is_none());
-        session.create_offer(localhost_addr()).unwrap();
+        session.create_offer(&[localhost_addr()]).unwrap();
         assert!(session.video_mid.is_some());
     }
 
