@@ -1,4 +1,7 @@
-use std::net::SocketAddr;
+use std::future::poll_fn;
+use std::io;
+use std::net::{IpAddr, SocketAddr};
+use std::task::Poll;
 use std::time::Instant;
 
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
@@ -7,6 +10,7 @@ use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind, MediaTime, Mid};
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
+use tokio::io::ReadBuf;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, watch};
 
@@ -17,6 +21,34 @@ const POSE_TAG_MAGIC: u8 = 0x52; // 'R' for "rendered"
 const POSE_TAG_VERSION: u8 = 0x01;
 /// Total size: magic(1) + version(1) + qx(4) + qy(4) + qz(4) + qw(4) = 18 bytes.
 const POSE_TAG_SIZE: usize = 18;
+
+/// A bound UDP socket together with the address advertised for it as an ICE
+/// host candidate.
+///
+/// These are always the same address today, but they are kept as one unit so a
+/// socket can never be paired with the wrong candidate — the bug that arises
+/// when parallel `Vec<UdpSocket>` / `Vec<SocketAddr>` lists drift out of sync.
+pub struct MediaSocket {
+    socket: UdpSocket,
+    addr: SocketAddr,
+}
+
+impl MediaSocket {
+    /// Bind a UDP socket at `addr` and advertise its *actual* bound address.
+    ///
+    /// Passing port 0 lets the OS choose; the resolved port is read back via
+    /// `local_addr`, so the advertised candidate always matches reality.
+    pub async fn bind(addr: SocketAddr) -> io::Result<Self> {
+        let socket = UdpSocket::bind(addr).await?;
+        let addr = socket.local_addr()?;
+        Ok(Self { socket, addr })
+    }
+
+    /// The address advertised as an ICE host candidate.
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+}
 
 /// Server-side WebRTC session.
 ///
@@ -50,16 +82,30 @@ impl WebRtcSession {
     /// mirrored networking, a browser on the same machine can fail to hairpin back
     /// to the host's own LAN IP even though external devices reach it fine.
     ///
-    /// Each address must be the bound address of a UDP socket passed to [`run`], in
-    /// the same order.
+    /// Unspecified addresses (`0.0.0.0` / `::`) are skipped: a wildcard is a
+    /// valid *bind* target but never a valid *dial* target, so advertising one
+    /// would hand the browser a candidate it can't connect to.
+    ///
+    /// Each address must be the bound address of a socket passed to [`run`].
     pub fn create_offer(
         &mut self,
         local_addrs: &[SocketAddr],
     ) -> Result<(SdpOffer, SdpPendingOffer), crate::TransportError> {
+        let mut advertised = 0usize;
         for local_addr in local_addrs {
+            if is_unspecified(local_addr) {
+                tracing::debug!("skipping unroutable ICE candidate {local_addr}");
+                continue;
+            }
             let candidate = Candidate::host(*local_addr, "udp")
                 .map_err(|e| crate::TransportError::WebRtc(e.to_string()))?;
             self.rtc.add_local_candidate(candidate);
+            advertised += 1;
+        }
+        if advertised == 0 {
+            return Err(crate::TransportError::WebRtc(
+                "no routable ICE host candidates to advertise".into(),
+            ));
         }
 
         let mut change = self.rtc.sdp_api();
@@ -95,27 +141,25 @@ impl WebRtcSession {
     ///
     /// This is the hot path — runs in its own tokio task.
     ///
-    /// - `lan_socket`/`lan_addr`   — UDP socket bound to the LAN-facing candidate
-    ///   passed to [`create_offer`], and its bound address.
-    /// - `loop_socket`/`loop_addr` — UDP socket bound to the loopback candidate
-    ///   passed to [`create_offer`], and its bound address.
+    /// - `sockets`      — the bound media sockets, one per candidate advertised
+    ///   by [`create_offer`]. Order does not matter: each socket carries its own
+    ///   address, and outgoing packets are matched to the socket str0m selected.
     /// - `video_rx`     — encoded H.264 NAL-unit bytes, one `Vec<u8>` per frame.
     /// - `pose_tx`      — publishes the latest head pose for the render loop.
     /// - `pose_tag_rx`  — rendered-pose orientations from the encode thread,
     ///   forwarded to the client as ATW tags over the data channel.
-    #[allow(clippy::too_many_arguments)]
     pub async fn run(
         mut self,
-        lan_socket: UdpSocket,
-        lan_addr: SocketAddr,
-        loop_socket: UdpSocket,
-        loop_addr: SocketAddr,
+        sockets: Vec<MediaSocket>,
         mut video_rx: mpsc::Receiver<Vec<u8>>,
         pose_tx: watch::Sender<Option<HeadPose>>,
         mut pose_tag_rx: mpsc::Receiver<[f32; 4]>,
     ) {
-        let mut lan_buf = vec![0u8; 2048];
-        let mut loop_buf = vec![0u8; 2048];
+        if sockets.is_empty() {
+            tracing::error!("WebRTC: run called with no media sockets");
+            return;
+        }
+        let mut recv_buf = vec![0u8; 2048];
         let session_start = Instant::now();
         let mut connected = false;
         let mut channel_id: Option<ChannelId> = None;
@@ -136,13 +180,13 @@ impl WebRtcSession {
                     }
                     Ok(Output::Timeout(t)) => break t,
                     Ok(Output::Transmit(t)) => {
-                        // Send from whichever socket owns the local candidate str0m picked.
-                        let socket = if t.source == loop_addr {
-                            &loop_socket
-                        } else {
-                            &lan_socket
-                        };
-                        if let Err(e) = socket.send_to(&t.contents, t.destination).await {
+                        // Send from whichever socket owns the local candidate str0m picked,
+                        // falling back to the first socket if no exact match exists.
+                        let ms = sockets
+                            .iter()
+                            .find(|s| s.addr == t.source)
+                            .unwrap_or(&sockets[0]);
+                        if let Err(e) = ms.socket.send_to(&t.contents, t.destination).await {
                             tracing::warn!("WebRTC UDP send: {e}");
                         }
                     }
@@ -162,26 +206,15 @@ impl WebRtcSession {
             let wait = timeout.saturating_duration_since(Instant::now());
 
             tokio::select! {
-                result = lan_socket.recv_from(&mut lan_buf) => {
+                result = recv_any(&sockets, &mut recv_buf) => {
                     match result {
-                        Ok((n, src)) => {
-                            let data = &lan_buf[..n];
-                            if let Ok(recv) = Receive::new(Protocol::Udp, src, lan_addr, data) {
+                        Ok((n, src, dst)) => {
+                            let data = &recv_buf[..n];
+                            if let Ok(recv) = Receive::new(Protocol::Udp, src, dst, data) {
                                 let _ = self.rtc.handle_input(Input::Receive(Instant::now(), recv));
                             }
                         }
-                        Err(e) => tracing::warn!("WebRTC UDP recv (LAN): {e}"),
-                    }
-                }
-                result = loop_socket.recv_from(&mut loop_buf) => {
-                    match result {
-                        Ok((n, src)) => {
-                            let data = &loop_buf[..n];
-                            if let Ok(recv) = Receive::new(Protocol::Udp, src, loop_addr, data) {
-                                let _ = self.rtc.handle_input(Input::Receive(Instant::now(), recv));
-                            }
-                        }
-                        Err(e) => tracing::warn!("WebRTC UDP recv (loopback): {e}"),
+                        Err(e) => tracing::warn!("WebRTC UDP recv: {e}"),
                     }
                 }
                 _ = tokio::time::sleep(wait) => {
@@ -221,6 +254,42 @@ impl Default for WebRtcSession {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// True for wildcard addresses (`0.0.0.0` / `::`), which can be bound but never dialled.
+fn is_unspecified(addr: &SocketAddr) -> bool {
+    match addr.ip() {
+        IpAddr::V4(ip) => ip.is_unspecified(),
+        IpAddr::V6(ip) => ip.is_unspecified(),
+    }
+}
+
+/// Await the first datagram to arrive on any of `sockets`.
+///
+/// Returns `(len, source, destination)`, where `destination` is the advertised
+/// address of the socket that received it — str0m needs it to attribute the
+/// packet to the right local ICE candidate.
+///
+/// Sockets are polled in order; under steady state exactly one candidate pair
+/// is active, so the bias is irrelevant in practice.
+async fn recv_any(
+    sockets: &[MediaSocket],
+    buf: &mut [u8],
+) -> io::Result<(usize, SocketAddr, SocketAddr)> {
+    poll_fn(|cx| {
+        for ms in sockets {
+            let mut read_buf = ReadBuf::new(buf);
+            match ms.socket.poll_recv_from(cx, &mut read_buf) {
+                Poll::Ready(Ok(src)) => {
+                    return Poll::Ready(Ok((read_buf.filled().len(), src, ms.addr)));
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => continue,
+            }
+        }
+        Poll::Pending
+    })
+    .await
 }
 
 /// Write one encoded H.264 frame as an RTP sample.
@@ -362,6 +431,72 @@ mod tests {
         assert!(session.video_mid.is_none());
         session.create_offer(&[localhost_addr()]).unwrap();
         assert!(session.video_mid.is_some());
+    }
+
+    #[test]
+    fn create_offer_skips_wildcard_candidates() {
+        // 0.0.0.0 is bindable but not dialable — it must never reach the SDP.
+        let mut session = WebRtcSession::new();
+        let wildcard: SocketAddr = "0.0.0.0:19876".parse().unwrap();
+        let (offer, _) = session.create_offer(&[wildcard, localhost_addr()]).unwrap();
+
+        // Only candidate lines matter here: every SDP carries a boilerplate
+        // `o=... IN IP4 0.0.0.0` origin line that is not a connection target.
+        let sdp = serde_json::to_string(&offer).unwrap();
+        let candidates: Vec<&str> = sdp
+            .split("\\r\\n")
+            .filter(|l| l.contains("candidate:"))
+            .collect();
+
+        assert!(!candidates.is_empty(), "expected a candidate line: {sdp}");
+        assert!(
+            !candidates.iter().any(|l| l.contains("0.0.0.0")),
+            "wildcard leaked into candidates: {candidates:?}"
+        );
+        assert!(
+            candidates.iter().any(|l| l.contains("127.0.0.1")),
+            "loopback candidate missing: {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn create_offer_rejects_when_all_candidates_unroutable() {
+        let mut session = WebRtcSession::new();
+        let wildcard: SocketAddr = "0.0.0.0:19876".parse().unwrap();
+        assert!(session.create_offer(&[wildcard]).is_err());
+    }
+
+    #[tokio::test]
+    async fn media_socket_reports_os_assigned_port() {
+        // Port 0 must be resolved to the real port, or the advertised
+        // candidate would not match the socket actually listening.
+        let ms = MediaSocket::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .expect("bind should succeed");
+        assert_ne!(ms.addr().port(), 0);
+    }
+
+    #[tokio::test]
+    async fn recv_any_reports_receiving_socket_address() {
+        let a = MediaSocket::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let b = MediaSocket::bind("127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+        let b_addr = b.addr();
+
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        sender.send_to(b"ping", b_addr).await.unwrap();
+
+        let sockets = vec![a, b];
+        let mut buf = vec![0u8; 64];
+        let (n, _src, dst) = recv_any(&sockets, &mut buf).await.unwrap();
+
+        assert_eq!(&buf[..n], b"ping");
+        // Destination must be the socket that actually received it, so str0m
+        // attributes the packet to the correct local candidate.
+        assert_eq!(dst, b_addr);
     }
 
     #[test]

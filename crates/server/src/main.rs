@@ -1,4 +1,5 @@
 mod app;
+mod net;
 mod render_loop;
 mod state;
 
@@ -76,7 +77,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let local_ip = args.local_ip.unwrap_or_else(|| {
-        detect_local_ip().unwrap_or_else(|| {
+        net::detect_local_ip().unwrap_or_else(|| {
             tracing::warn!(
                 "Could not auto-detect a LAN IP; falling back to 127.0.0.1 — pass --local-ip \
                  explicitly if this server needs to be reached from another device"
@@ -118,15 +119,6 @@ async fn main() -> Result<()> {
         .await?;
 
     Ok(())
-}
-
-/// Best-effort detection of this machine's LAN-facing IP by asking the OS
-/// which local address it would use to route toward a public address.
-/// `UdpSocket::connect` only resolves a route — no packets are sent.
-fn detect_local_ip() -> Option<IpAddr> {
-    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
-    socket.connect("8.8.8.8:80").ok()?;
-    socket.local_addr().ok().map(|a| a.ip())
 }
 
 async fn make_tls_config(local_ip: IpAddr) -> Result<RustlsConfig> {
