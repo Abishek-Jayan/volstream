@@ -387,8 +387,9 @@ class XRRenderer {
 const CTRL_VERT = `
 attribute vec3 aPos;
 uniform mat4 uMVP;
+uniform float uScale;
 void main() {
-  gl_Position = uMVP * vec4(aPos, 1.0);
+  gl_Position = uMVP * vec4(aPos * uScale, 1.0);
 }`;
 
 const CTRL_FRAG = `
@@ -405,9 +406,13 @@ class ControllerRenderer {
     this._vbuf = null;
     this._ibuf = null;
     this._indexCount = 0;
+    this._jointVbuf = null;
+    this._jointIbuf = null;
+    this._jointIndexCount = 0;
     this._aPos = -1;
     this._uMVP = null;
     this._uColor = null;
+    this._uScale = null;
   }
 
   init() {
@@ -423,6 +428,7 @@ class ControllerRenderer {
     this._aPos   = gl.getAttribLocation(this._prog, 'aPos');
     this._uMVP   = gl.getUniformLocation(this._prog, 'uMVP');
     this._uColor = gl.getUniformLocation(this._prog, 'uColor');
+    this._uScale = gl.getUniformLocation(this._prog, 'uScale');
 
     // Box half-extents: 1.5 cm × 1.5 cm × 6 cm.
     // The long axis runs along −Z (grip-space "forward").
@@ -449,6 +455,23 @@ class ControllerRenderer {
 
     this._ibuf = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this._ibuf);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+
+    // Unit cube (half-extent 1) reused for hand joints — scaled per-joint by
+    // uScale (set to the joint radius reported by XRJointPose) at draw time.
+    const jw = 1, jh = 1, jd = 1;
+    const jointVerts = new Float32Array([
+      -jw, -jh,  jd,   jw, -jh,  jd,   jw,  jh,  jd,  -jw,  jh,  jd,
+      -jw, -jh, -jd,   jw, -jh, -jd,   jw,  jh, -jd,  -jw,  jh, -jd,
+    ]);
+    this._jointIndexCount = idx.length;
+
+    this._jointVbuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this._jointVbuf);
+    gl.bufferData(gl.ARRAY_BUFFER, jointVerts, gl.STATIC_DRAW);
+
+    this._jointIbuf = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this._jointIbuf);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
   }
 
@@ -487,6 +510,7 @@ class ControllerRenderer {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this._ibuf);
     gl.enableVertexAttribArray(this._aPos);
     gl.vertexAttribPointer(this._aPos, 3, gl.FLOAT, false, 0, 0);
+    gl.uniform1f(this._uScale, 1.0);
 
     for (const view of views) {
       const vp = glLayer.getViewport(view);
@@ -512,6 +536,67 @@ class ControllerRenderer {
         }
 
         gl.drawElements(gl.TRIANGLES, this._indexCount, gl.UNSIGNED_SHORT, 0);
+      }
+    }
+
+    gl.enable(gl.DEPTH_TEST);
+  }
+
+  /**
+   * Draw a small cube at each tracked joint of every hand-tracking input
+   * source, sized to the joint's reported radius. This is the hand-tracking
+   * counterpart to drawControllers() — hand sources have no gripSpace, so
+   * they're skipped there and rendered here instead.
+   *
+   * @param {XRFrame}          frame
+   * @param {XRSession}        session
+   * @param {XRReferenceSpace} refSpace
+   * @param {XRWebGLLayer}     glLayer
+   * @param {readonly XRView[]} views
+   */
+  drawHandJoints(frame, session, refSpace, glLayer, views) {
+    const handSources = Array.from(session.inputSources).filter(src => src.hand);
+    if (handSources.length === 0) return;
+
+    const gl = this._gl;
+    gl.disable(gl.DEPTH_TEST);
+    gl.useProgram(this._prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this._jointVbuf);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this._jointIbuf);
+    gl.enableVertexAttribArray(this._aPos);
+    gl.vertexAttribPointer(this._aPos, 3, gl.FLOAT, false, 0, 0);
+
+    // Gather joint poses once per frame (not per eye) — same pose is reused
+    // for both stereo views below.
+    const joints = [];
+    for (const src of handSources) {
+      const color = src.handedness === 'left'
+        ? [0.35, 0.55, 0.95]
+        : [0.95, 0.35, 0.35];
+      for (const jointSpace of src.hand.values()) {
+        const jointPose = frame.getJointPose(jointSpace, refSpace);
+        if (!jointPose) continue;
+        joints.push({ matrix: jointPose.transform.matrix, radius: jointPose.radius || 0.008, color });
+      }
+    }
+    if (joints.length === 0) {
+      gl.enable(gl.DEPTH_TEST);
+      return;
+    }
+
+    for (const view of views) {
+      const vp = glLayer.getViewport(view);
+      gl.viewport(vp.x, vp.y, vp.width, vp.height);
+
+      const viewMat = mat4InverseRigid(view.transform.matrix);
+      const projMat = view.projectionMatrix;
+
+      for (const joint of joints) {
+        const mvp = mat4Mul(projMat, mat4Mul(viewMat, joint.matrix));
+        gl.uniformMatrix4fv(this._uMVP, false, mvp);
+        gl.uniform1f(this._uScale, joint.radius);
+        gl.uniform3f(this._uColor, joint.color[0], joint.color[1], joint.color[2]);
+        gl.drawElements(gl.TRIANGLES, this._jointIndexCount, gl.UNSIGNED_SHORT, 0);
       }
     }
 
@@ -754,16 +839,6 @@ function dist3(a, b) {
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-/** Vector subtraction; returns a plain {x,y,z}. */
-function sub3(a, b) { return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }; }
-
-/** Normalize a {x,y,z} vector; returns zero vector when degenerate. */
-function normalize3(v) {
-  const len = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-  if (len < 1e-6) return { x: 0, y: 0, z: 0 };
-  return { x: v.x / len, y: v.y / len, z: v.z / len };
-}
-
 // ─── Matrix helpers ───────────────────────────────────────────────────────────
 
 /**
@@ -830,8 +905,11 @@ function pollGamepad(dtSec) {
     };
 
     if (src.handedness === 'left') {
-      const strafe  = ax(2, 0);
-      const forward = ax(3, 1);
+      // LOCO.offset is subtracted (not added) from the physical position to
+      // produce the virtual camera pose, which inverts the usual stick→camera
+      // relationship — negate both raw axes to compensate.
+      const strafe  = -ax(2, 0);
+      const forward = -ax(3, 1);
       if (strafe || forward) applyMove(strafe, forward, dtSec);
     } else if (src.handedness === 'right') {
       const turn = ax(2, 0);
@@ -865,41 +943,65 @@ function applyMove(stickStrafe, stickForward, dtSec) {
 /** Thumb-tip to index-tip distance threshold for the pinch gesture (metres). */
 const PINCH_THRESHOLD = 0.03;
 
+/** Per-hand pinch-drag state, keyed by handedness ('left' | 'right'). */
+const _pinchState = { left: null, right: null };
+
 /**
- * Detect a pinch-to-fly gesture using the WebXR Hand Tracking API.
+ * Detect a pinch-and-drag "grab the world" gesture using the WebXR Hand
+ * Tracking API.
  *
- * Gesture: thumb tip and index finger tip within PINCH_THRESHOLD of each other.
- * Direction: wrist → index metacarpal (the hand's "pointing" axis).
+ * While pinching (thumb tip within PINCH_THRESHOLD of index tip), the point
+ * midway between the fingertips is anchored to the world: moving the
+ * physical hand drags the volume along with it, like grabbing a rope and
+ * pulling. Releasing the pinch drops the anchor; pinching again starts a
+ * fresh drag from wherever the fingertips are.
  *
  * Falls through silently when hand tracking is unavailable (src.hand === null),
  * so joystick locomotion continues to work on controller-only setups.
  *
  * @param {XRFrame} frame
  * @param {XRReferenceSpace} baseRefSpace  Unshifted tracking origin.
- * @param {number} dtSec
  */
-function pollHandGestures(frame, baseRefSpace, dtSec) {
+function pollHandGestures(frame, baseRefSpace) {
   if (!xrSession) return;
+
+  const seenHands = new Set();
+
   for (const src of xrSession.inputSources) {
-    if (!src.hand) continue;
+    if (!src.hand || !src.handedness) continue;
+    seenHands.add(src.handedness);
 
-    const thumbTip = frame.getJointPose(src.hand.get('thumb-tip'),              baseRefSpace);
-    const idxTip   = frame.getJointPose(src.hand.get('index-finger-tip'),       baseRefSpace);
-    const wrist    = frame.getJointPose(src.hand.get('wrist'),                  baseRefSpace);
-    const idxMcp   = frame.getJointPose(src.hand.get('index-finger-metacarpal'), baseRefSpace);
+    const thumbTip = frame.getJointPose(src.hand.get('thumb-tip'),        baseRefSpace);
+    const idxTip   = frame.getJointPose(src.hand.get('index-finger-tip'), baseRefSpace);
+    if (!thumbTip || !idxTip) continue;
 
-    if (!thumbTip || !idxTip || !wrist || !idxMcp) continue;
-
+    const pinchPos = {
+      x: (thumbTip.transform.position.x + idxTip.transform.position.x) / 2,
+      y: (thumbTip.transform.position.y + idxTip.transform.position.y) / 2,
+      z: (thumbTip.transform.position.z + idxTip.transform.position.z) / 2,
+    };
     const pinching = dist3(thumbTip.transform.position, idxTip.transform.position)
                      < PINCH_THRESHOLD;
-    if (!pinching) continue;
+    const state = _pinchState[src.handedness];
 
-    // Fly in the direction from wrist toward the index metacarpal.
-    const dir  = normalize3(sub3(idxMcp.transform.position, wrist.transform.position));
-    const step = LOCO.moveSpeed * dtSec;
-    LOCO.offset.x += dir.x * step;
-    LOCO.offset.y += dir.y * step;
-    LOCO.offset.z += dir.z * step;
+    if (pinching && !state) {
+      // Pinch just started — anchor the drag at the current fingertip midpoint.
+      _pinchState[src.handedness] = { prevPos: pinchPos };
+    } else if (pinching && state) {
+      // Dragging — shift the world by the same physical delta the hand moved,
+      // so the grabbed point stays under the fingertips (pan-style drag).
+      LOCO.offset.x += pinchPos.x - state.prevPos.x;
+      LOCO.offset.y += pinchPos.y - state.prevPos.y;
+      LOCO.offset.z += pinchPos.z - state.prevPos.z;
+      state.prevPos = pinchPos;
+    } else if (!pinching && state) {
+      _pinchState[src.handedness] = null;
+    }
+  }
+
+  // Drop stale state for hands that dropped out of tracking this frame.
+  for (const hand of ['left', 'right']) {
+    if (!seenHands.has(hand)) _pinchState[hand] = null;
   }
 }
 
@@ -1061,6 +1163,7 @@ async function startXRSession(mode) {
   // Reset locomotion and FPS state when a new XR session starts.
   LOCO.offset.x = 0; LOCO.offset.y = 0; LOCO.offset.z = 0;
   LOCO.yaw = 0;
+  _pinchState.left = null; _pinchState.right = null;
   _lastFrameTimeMs = 0;
   _fpsFrameCount = 0;
   _fpsWindowStart = 0;
@@ -1092,7 +1195,7 @@ async function startXRSession(mode) {
 
     // Poll locomotion inputs and accumulate into LOCO.offset / LOCO.yaw.
     pollGamepad(dtSec);
-    pollHandGestures(frame, baseRefSpace, dtSec);
+    pollHandGestures(frame, baseRefSpace);
 
     // Get the physical head pose from the immutable tracking space.
     const physPose = frame.getViewerPose(baseRefSpace);
@@ -1125,8 +1228,9 @@ async function startXRSession(mode) {
     // Render the stereo video frame with ATW correction applied.
     renderer.drawFrame(glLayer, physPose.views, atwOffset);
 
-    // Render VR controller meshes on top of the video quad.
+    // Render VR controller meshes and hand-tracking joints on top of the video quad.
     controllerRenderer.drawControllers(frame, xrSession, baseRefSpace, glLayer, physPose.views);
+    controllerRenderer.drawHandJoints(frame, xrSession, baseRefSpace, glLayer, physPose.views);
   }
 
   xrSession.requestAnimationFrame(onXRFrame);
